@@ -1,0 +1,99 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-south1
+  REPO: customer-support
+  SERVICE: voice-agent
+  IMAGE: asia-south1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/customer-support/voice-agent
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for Workload Identity Federation
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate to GCP (keyless via Workload Identity Federation) ────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ── 3. Set up Cloud SDK ──────────────────────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # ── 4. Configure Docker for Artifact Registry ────────────────────────────
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # ── 5. Build & push image ────────────────────────────────────────────────
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            --tag ${{ env.IMAGE }}:${{ github.sha }} \
+            --tag ${{ env.IMAGE }}:latest \
+            .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
+
+      # ── 6. Deploy to Cloud Run ───────────────────────────────────────────────
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8000 \
+            --min-instances 1 \
+            --max-instances 10 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 3600 \
+            --set-env-vars "\
+          TELEPHONY_PROVIDER=twilio,\
+          TTS_PROVIDER=elevenlabs,\
+          LLM_MODEL=groq/llama-3.3-70b-versatile,\
+          STT_MODEL=nova-3,\
+          STT_LANGUAGE=hi,\
+          STT_ENDPOINTING_MS=1400,\
+          STT_CONFIDENCE_THRESHOLD=0.88,\
+          USE_REDIS=false,\
+          LOG_LEVEL=INFO,\
+          HOST=0.0.0.0,\
+          PORT=8000" \
+            --set-secrets "\
+          TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,\
+          TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,\
+          TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,\
+          DEEPGRAM_API_KEY=DEEPGRAM_API_KEY:latest,\
+          OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,\
+          ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest,\
+          ELEVENLABS_VOICE_ID=ELEVENLABS_VOICE_ID:latest,\
+          ELEVENLABS_PRONUNCIATION_DICT_ID=ELEVENLABS_PRONUNCIATION_DICT_ID:latest,\
+          ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID=ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID:latest,\
+          HUBSPOT_ACCESS_TOKEN=HUBSPOT_ACCESS_TOKEN:latest,\
+          PUBLIC_URL=PUBLIC_URL:latest"
+
+      # ── 7. Print service URL ─────────────────────────────────────────────────
+      - name: Get service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "✅ Deployed: $URL"
+          echo "SERVICE_URL=$URL" >> $GITHUB_STEP_SUMMARY

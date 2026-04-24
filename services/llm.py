@@ -88,9 +88,8 @@ async def stream_response(
         except RateLimitError:
             # Groq quota exhausted — try free models on OpenRouter in order
             _FREE_FALLBACKS = [
-                "meta-llama/llama-3.3-70b-instruct:free",
                 "openai/gpt-oss-120b:free",
-                "qwen/qwen3-next-80b-a3b-instruct:free",
+                "meta-llama/llama-3.3-70b-instruct:free",
                 "nousresearch/hermes-3-llama-3.1-405b:free",
             ]
             fallback_kwargs = {**kwargs}

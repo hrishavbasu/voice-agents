@@ -71,7 +71,7 @@ CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 # LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "200"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))
 LLM_STREAM = True
 

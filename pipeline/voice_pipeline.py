@@ -261,7 +261,8 @@ class VoicePipeline:
                 crm_contact=self._crm_contact,
                 caller_language=current_lang,
             )
-            full_messages = [{"role": "system", "content": system}] + messages
+            # Keep last 10 messages only — reduces tokens per request by ~40%
+            full_messages = [{"role": "system", "content": system}] + messages[-10:]
 
             # Stream LLM response
             assistant_text_parts = []
@@ -532,7 +533,7 @@ class VoicePipeline:
         # messages was fetched before the appends above, so add them explicitly.
         full_messages = (
             [{"role": "system", "content": system}]
-            + messages
+            + messages[-10:]
             + [assistant_tool_call_msg, tool_result_msg]
         )
 

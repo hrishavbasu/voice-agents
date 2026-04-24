@@ -70,7 +70,7 @@ jobs:
           LLM_MODEL=openai/gpt-4o-mini,\
           STT_MODEL=nova-3,\
           STT_LANGUAGE=hi,\
-          STT_ENDPOINTING_MS=1400,\
+          STT_ENDPOINTING_MS=500,\
           STT_CONFIDENCE_THRESHOLD=0.88,\
           USE_REDIS=false,\
           LOG_LEVEL=INFO,\

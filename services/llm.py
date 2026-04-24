@@ -21,6 +21,9 @@ from openai import AsyncOpenAI
 from config.base_config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
+    GROQ_API_KEY,
+    GROQ_BASE_URL,
+    LLM_PROVIDER,
     LLM_MODEL,
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
@@ -28,7 +31,13 @@ from config.base_config import (
 
 logger = logging.getLogger(__name__)
 
-_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+# Groq is ~3-5x faster than OpenRouter for same model — use it when key is set
+if LLM_PROVIDER == "groq" and GROQ_API_KEY:
+    _client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
+    logger.info("LLM provider: Groq (direct) model=%s", LLM_MODEL)
+else:
+    _client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    logger.info("LLM provider: OpenRouter model=%s", LLM_MODEL)
 
 # Sentence boundary — split on .  !  ? followed by whitespace
 # Lookbehinds prevent splitting after known abbreviations (ASCII + Devanagari).
@@ -58,11 +67,12 @@ async def stream_response(
         "max_tokens": LLM_MAX_TOKENS,
         "temperature": LLM_TEMPERATURE,
         "stream": True,
-        "extra_headers": {
+    }
+    if LLM_PROVIDER != "groq":
+        kwargs["extra_headers"] = {
             "X-Title": "Customer Support AI",
             "HTTP-Referer": "https://customer-support-mvp.local",
-        },
-    }
+        }
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"

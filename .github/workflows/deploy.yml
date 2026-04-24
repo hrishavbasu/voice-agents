@@ -67,7 +67,8 @@ jobs:
             --set-env-vars "\
           TELEPHONY_PROVIDER=twilio,\
           TTS_PROVIDER=elevenlabs,\
-          LLM_MODEL=openai/gpt-4o-mini,\
+          LLM_PROVIDER=groq,\
+          LLM_MODEL=llama-3.3-70b-versatile,\
           STT_MODEL=nova-3,\
           STT_LANGUAGE=hi,\
           STT_ENDPOINTING_MS=500,\
@@ -86,6 +87,7 @@ jobs:
           ELEVENLABS_PRONUNCIATION_DICT_ID=ELEVENLABS_PRONUNCIATION_DICT_ID:latest,\
           ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID=ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID:latest,\
           HUBSPOT_ACCESS_TOKEN=HUBSPOT_ACCESS_TOKEN:latest,\
+          GROQ_API_KEY=GROQ_API_KEY:latest,\
           PUBLIC_URL=PUBLIC_URL:latest"
 
       # ── 7. Print service URL ─────────────────────────────────────────────────

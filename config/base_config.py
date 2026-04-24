@@ -60,8 +60,13 @@ AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Groq via OpenRouter — low latency, no separate Groq key needed
-LLM_MODEL = os.getenv("LLM_MODEL", "groq/llama-3.3-70b-versatile")
+# Groq — direct API (lowest latency)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+# LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "512"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))
 LLM_STREAM = True

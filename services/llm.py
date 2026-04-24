@@ -86,9 +86,9 @@ async def stream_response(
         try:
             stream = await _client.chat.completions.create(**kwargs)
         except RateLimitError:
-            logger.warning("Groq 429 — falling back to OpenRouter")
+            logger.warning("Groq 429 — falling back to OpenRouter (free Llama)")
             fallback_kwargs = {**kwargs}
-            fallback_kwargs["model"] = "openai/gpt-4o-mini"
+            fallback_kwargs["model"] = "meta-llama/llama-3.3-70b-instruct:free"
             fallback_kwargs["extra_headers"] = {
                 "X-Title": "Customer Support AI",
                 "HTTP-Referer": "https://customer-support-mvp.local",

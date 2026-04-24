@@ -16,7 +16,7 @@ import logging
 import re
 from typing import AsyncIterator, Optional
 
-from openai import AsyncOpenAI, RateLimitError
+from openai import AsyncOpenAI, RateLimitError, NotFoundError
 
 from config.base_config import (
     OPENROUTER_API_KEY,
@@ -92,14 +92,14 @@ async def stream_response(
             # Groq quota exhausted — try Cerebras first (same speed), then OpenRouter
             stream = None
 
-            # 1. Cerebras — ~300ms, same as Groq, higher free limits
+            # 1. Cerebras — ~600ms, free, higher limits than Groq
             if CEREBRAS_API_KEY:
                 try:
-                    cerebras_kwargs = {**kwargs, "model": "llama-3.3-70b"}
+                    cerebras_kwargs = {**kwargs, "model": "qwen-3-235b-a22b-instruct-2507"}
                     logger.warning("Groq 429 — trying Cerebras")
                     stream = await _cerebras_client.chat.completions.create(**cerebras_kwargs)
-                except RateLimitError:
-                    logger.warning("Cerebras also rate-limited")
+                except (RateLimitError, NotFoundError):
+                    logger.warning("Cerebras unavailable, trying OpenRouter")
 
             # 2. OpenRouter free models — slower but unlimited
             if stream is None:

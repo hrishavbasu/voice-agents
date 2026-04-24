@@ -86,14 +86,30 @@ async def stream_response(
         try:
             stream = await _client.chat.completions.create(**kwargs)
         except RateLimitError:
-            logger.warning("Groq 429 — falling back to OpenRouter (free Llama)")
+            # Groq quota exhausted — try free models on OpenRouter in order
+            _FREE_FALLBACKS = [
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "openai/gpt-oss-120b:free",
+                "qwen/qwen3-next-80b-a3b-instruct:free",
+                "nousresearch/hermes-3-llama-3.1-405b:free",
+            ]
             fallback_kwargs = {**kwargs}
-            fallback_kwargs["model"] = "meta-llama/llama-3.3-70b-instruct:free"
             fallback_kwargs["extra_headers"] = {
                 "X-Title": "Customer Support AI",
                 "HTTP-Referer": "https://customer-support-mvp.local",
             }
-            stream = await _fallback_client.chat.completions.create(**fallback_kwargs)
+            stream = None
+            for fb_model in _FREE_FALLBACKS:
+                try:
+                    fallback_kwargs["model"] = fb_model
+                    logger.warning("Groq 429 — trying fallback: %s", fb_model)
+                    stream = await _fallback_client.chat.completions.create(**fallback_kwargs)
+                    break
+                except RateLimitError:
+                    logger.warning("Fallback %s also rate-limited, trying next", fb_model)
+                    continue
+            if stream is None:
+                raise RateLimitError("All free LLM providers exhausted", response=None, body=None)
 
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None

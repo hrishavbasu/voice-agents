@@ -16,7 +16,7 @@ import logging
 import re
 from typing import AsyncIterator, Optional
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from config.base_config import (
     OPENROUTER_API_KEY,
@@ -31,13 +31,15 @@ from config.base_config import (
 
 logger = logging.getLogger(__name__)
 
-# Groq is ~3-5x faster than OpenRouter for same model — use it when key is set
+# Primary: Groq (lowest latency). Fallback: OpenRouter (when Groq 429s).
 if LLM_PROVIDER == "groq" and GROQ_API_KEY:
     _client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
     logger.info("LLM provider: Groq (direct) model=%s", LLM_MODEL)
 else:
     _client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
     logger.info("LLM provider: OpenRouter model=%s", LLM_MODEL)
+
+_fallback_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
 # Sentence boundary — split on .  !  ? followed by whitespace
 # Lookbehinds prevent splitting after known abbreviations (ASCII + Devanagari).
@@ -81,7 +83,17 @@ async def stream_response(
     tool_calls_acc: dict[int, dict] = {}  # index → accumulated tool call
 
     try:
-        stream = await _client.chat.completions.create(**kwargs)
+        try:
+            stream = await _client.chat.completions.create(**kwargs)
+        except RateLimitError:
+            logger.warning("Groq 429 — falling back to OpenRouter")
+            fallback_kwargs = {**kwargs}
+            fallback_kwargs["model"] = "openai/gpt-4o-mini"
+            fallback_kwargs["extra_headers"] = {
+                "X-Title": "Customer Support AI",
+                "HTTP-Referer": "https://customer-support-mvp.local",
+            }
+            stream = await _fallback_client.chat.completions.create(**fallback_kwargs)
 
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None

@@ -67,7 +67,7 @@ jobs:
             --set-env-vars "\
           TELEPHONY_PROVIDER=twilio,\
           TTS_PROVIDER=elevenlabs,\
-          LLM_MODEL=groq/llama-3.3-70b-versatile,\
+          LLM_MODEL=openai/gpt-4o-mini,\
           STT_MODEL=nova-3,\
           STT_LANGUAGE=hi,\
           STT_ENDPOINTING_MS=1400,\

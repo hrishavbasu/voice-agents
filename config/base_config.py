@@ -64,6 +64,10 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
+# Cerebras — same speed as Groq, higher free limits
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+
 # LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")

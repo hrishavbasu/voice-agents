@@ -23,6 +23,8 @@ from config.base_config import (
     OPENROUTER_BASE_URL,
     GROQ_API_KEY,
     GROQ_BASE_URL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
     LLM_PROVIDER,
     LLM_MODEL,
     LLM_MAX_TOKENS,
@@ -31,15 +33,16 @@ from config.base_config import (
 
 logger = logging.getLogger(__name__)
 
-# Primary: Groq (lowest latency). Fallback: OpenRouter (when Groq 429s).
+# Primary: Groq (lowest latency). Fallback chain: Cerebras → OpenRouter free.
 if LLM_PROVIDER == "groq" and GROQ_API_KEY:
     _client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
-    logger.info("LLM provider: Groq (direct) model=%s", LLM_MODEL)
+    logger.info("LLM provider: Groq model=%s", LLM_MODEL)
 else:
     _client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
     logger.info("LLM provider: OpenRouter model=%s", LLM_MODEL)
 
-_fallback_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+_cerebras_client = AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=CEREBRAS_BASE_URL)
+_openrouter_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
 # Sentence boundary — split on .  !  ? followed by whitespace
 # Lookbehinds prevent splitting after known abbreviations (ASCII + Devanagari).
@@ -86,29 +89,40 @@ async def stream_response(
         try:
             stream = await _client.chat.completions.create(**kwargs)
         except RateLimitError:
-            # Groq quota exhausted — try free models on OpenRouter in order
-            _FREE_FALLBACKS = [
-                "openai/gpt-oss-120b:free",
-                "meta-llama/llama-3.3-70b-instruct:free",
-                "nousresearch/hermes-3-llama-3.1-405b:free",
-            ]
-            fallback_kwargs = {**kwargs}
-            fallback_kwargs["extra_headers"] = {
-                "X-Title": "Customer Support AI",
-                "HTTP-Referer": "https://customer-support-mvp.local",
-            }
+            # Groq quota exhausted — try Cerebras first (same speed), then OpenRouter
             stream = None
-            for fb_model in _FREE_FALLBACKS:
+
+            # 1. Cerebras — ~300ms, same as Groq, higher free limits
+            if CEREBRAS_API_KEY:
                 try:
-                    fallback_kwargs["model"] = fb_model
-                    logger.warning("Groq 429 — trying fallback: %s", fb_model)
-                    stream = await _fallback_client.chat.completions.create(**fallback_kwargs)
-                    break
+                    cerebras_kwargs = {**kwargs, "model": "llama-3.3-70b"}
+                    logger.warning("Groq 429 — trying Cerebras")
+                    stream = await _cerebras_client.chat.completions.create(**cerebras_kwargs)
                 except RateLimitError:
-                    logger.warning("Fallback %s also rate-limited, trying next", fb_model)
-                    continue
+                    logger.warning("Cerebras also rate-limited")
+
+            # 2. OpenRouter free models — slower but unlimited
             if stream is None:
-                raise RateLimitError("All free LLM providers exhausted", response=None, body=None)
+                _OR_FALLBACKS = [
+                    "openai/gpt-oss-120b:free",
+                    "meta-llama/llama-3.3-70b-instruct:free",
+                    "nousresearch/hermes-3-llama-3.1-405b:free",
+                ]
+                or_kwargs = {**kwargs, "extra_headers": {
+                    "X-Title": "Customer Support AI",
+                    "HTTP-Referer": "https://customer-support-mvp.local",
+                }}
+                for fb_model in _OR_FALLBACKS:
+                    try:
+                        or_kwargs["model"] = fb_model
+                        logger.warning("Trying OpenRouter fallback: %s", fb_model)
+                        stream = await _openrouter_client.chat.completions.create(**or_kwargs)
+                        break
+                    except RateLimitError:
+                        logger.warning("%s rate-limited, trying next", fb_model)
+
+            if stream is None:
+                raise RateLimitError("All LLM providers exhausted", response=None, body=None)
 
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None

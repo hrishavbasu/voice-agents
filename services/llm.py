@@ -44,12 +44,12 @@ else:
 _cerebras_client = AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=CEREBRAS_BASE_URL)
 _openrouter_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
 
-# Sentence boundary — split on .  !  ? followed by whitespace
-# Lookbehinds prevent splitting after known abbreviations (ASCII + Devanagari).
-# Also guarded by word-count check in stream_response: fragments < 3 words are
-# merged back (catches initials like "एस.वी." not coverable by fixed lookbehind).
+# Sentence boundary — two cases:
+#   1. Latin .!? with lookbehinds to skip abbreviations (Dr., Mr., etc.)
+#   2. Devanagari danda । and double-danda ॥ — always sentence boundaries,
+#      no abbreviation ambiguity; allow zero or more trailing spaces.
 _SENTENCE_RE = re.compile(
-    r"(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Sr\.)(?<!Jr\.)(?<!Mrs\.)(?<!Prof\.)(?<!डॉ\.)(?<=[.!?])\s+"
+    r"(?:(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Sr\.)(?<!Jr\.)(?<!Mrs\.)(?<!Prof\.)(?<!डॉ\.)(?<=[.!?])\s+|(?<=[।॥])\s*)"
 )
 
 
@@ -158,9 +158,10 @@ async def stream_response(
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                # Fewer than 3 words = almost certainly an abbreviation fragment
-                # (e.g. "डॉ.", "एस.वी.") — merge back rather than yield a micro-TTS call.
-                if len(sentence.split()) < 3:
+                # Fewer than 3 words ending in a Latin period = likely an
+                # abbreviation fragment (e.g. "डॉ.", "एस.वी.") — merge back.
+                # Danda-terminated sentences (।) are always genuine regardless of length.
+                if len(sentence.split()) < 3 and not sentence.endswith(("।", "॥", "!", "?")):
                     parts[-1] = sentence + " " + parts[-1]
                     continue
                 logger.debug("LLM sentence: %s", sentence)

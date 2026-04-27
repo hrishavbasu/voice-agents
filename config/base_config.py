@@ -24,7 +24,7 @@ STT_MODEL = os.getenv("STT_MODEL", "nova-3")
 STT_LANGUAGE = os.getenv("STT_LANGUAGE", "hi")      # Devanagari Hindi (Nova-3)
 STT_SMART_FORMAT = True
 STT_INTERIM_RESULTS = True
-STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "1400"))
+STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "700"))
 STT_CONFIDENCE_THRESHOLD = float(os.getenv("STT_CONFIDENCE_THRESHOLD", "0.88"))
 KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))  # 5 min
 

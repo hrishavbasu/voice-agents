@@ -53,8 +53,8 @@ async def elevenlabs_synthesize(
     params = {"output_format": "ulaw_8000"}
     payload = {
         "text": text,
-        # eleven_multilingual_v2 — full SSML + <phoneme> support; slightly higher latency than turbo
-        "model_id": "eleven_multilingual_v2",
+        # eleven_turbo_v2_5 — ~250 ms TTFB vs ~500 ms for multilingual_v2; supports Hindi+English
+        "model_id": "eleven_turbo_v2_5",
         # Tuned for natural conversation — lower stability = more expressive,
         # style > 0 adds warmth, similarity_boost preserves voice character.
         "voice_settings": {

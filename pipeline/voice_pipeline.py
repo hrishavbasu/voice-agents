@@ -94,7 +94,7 @@ TOOL_FILLERS: dict[str, list[str]] = {
         "बस एक पल।",
         "मैं देखती हूँ।",
         "Just a second.",
-        "Let me check करता हूँ।",
+        "Let me check करती हूँ।",
         "हाँ, मैं अभी देख लेती हूँ।",
     ],
 }
@@ -337,12 +337,29 @@ class VoicePipeline:
         self._tts.reset()
         self._tts_playing = True
         total_bytes = 0
+        # Buffer to 160-byte (20 ms) boundaries — Twilio's G.711 packet size.
+        # Sending sub-frame chunks causes decoder glitches that sound like crackling.
+        _FRAME = 160
+        buf = bytearray()
         try:
             async for chunk in self._tts.synthesize(text, voice_id=ELEVENLABS_VOICE_ID):
                 if self._interruption.is_interrupted:
                     break
-                total_bytes += len(chunk)
-                await self._telephony.send_audio(chunk)
+                buf.extend(chunk)
+                while len(buf) >= _FRAME:
+                    if self._interruption.is_interrupted:
+                        break
+                    frame = bytes(buf[:_FRAME])
+                    buf = buf[_FRAME:]
+                    total_bytes += len(frame)
+                    await self._telephony.send_audio(frame)
+                if self._interruption.is_interrupted:
+                    break
+            # Flush remainder padded with μ-law silence (0xFF)
+            if buf and not self._interruption.is_interrupted:
+                padded = bytes(buf) + bytes([0xFF] * (_FRAME - len(buf) % _FRAME))
+                total_bytes += len(buf)
+                await self._telephony.send_audio(padded)
         finally:
             self._tts_playing = False
         return total_bytes / 8000

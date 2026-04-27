@@ -141,14 +141,13 @@ def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     return None
 
 
-def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
+def _parse_preferred_hour(preferred_time: str) -> Optional[float]:
     """
-    Parse caller's preferred time to a 24h hour integer.
+    Parse caller's preferred time to a 24h float (e.g. 18.5 for 6:30 PM).
     Handles: "4pm", "4:30 PM", "16:30", "morning", "evening", "shaam",
-             "six thirty in the evening", "saade chhe baje".
+             "six thirty in the evening", "half past six in the evening".
 
-    Word-form numbers are resolved BEFORE period keywords so that
-    "six thirty in the evening" → 18, not 17 (the evening-period default).
+    Returns a float so _pick_best_slot can distinguish 6:00 from 6:30.
     """
     pt = preferred_time.lower().strip()
 
@@ -163,14 +162,11 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
         "half past": 30, "quarter past": 15, "quarter to": -15,
     }
 
-    # Try to extract word-form hour (e.g. "six", "seven thirty", "half past six")
     word_hour: Optional[int] = None
     word_minute: int = 0
 
     # "half past SIX" / "quarter past SEVEN"
-    m_half = re.search(
-        r"(half past|quarter past|quarter to)\s+(\w+)", pt
-    )
+    m_half = re.search(r"(half past|quarter past|quarter to)\s+(\w+)", pt)
     if m_half:
         adj = _WORD_MINUTES.get(m_half.group(1), 0)
         h = _WORD_HOURS.get(m_half.group(2))
@@ -189,42 +185,39 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
                         break
                 break
 
-    # ── Period keywords (used for AM/PM resolution or standalone fallback) ────
+    # ── Period keywords ───────────────────────────────────────────────────────
     is_morning   = any(w in pt for w in ["morning", "subah", "savere"])
     is_afternoon = any(w in pt for w in ["afternoon", "dopahar", "dupahr"])
     is_evening   = any(w in pt for w in ["evening", "shaam", "sham"])
     is_night     = any(w in pt for w in ["night", "raat"])
 
-    # ── If we parsed a word-form hour, apply AM/PM from period keyword ────────
     if word_hour is not None:
         if is_morning:
-            # Keep as-is (1-12 AM)
             if word_hour == 12:
                 word_hour = 0
         elif is_afternoon or is_evening or is_night:
-            # Convert to PM
             if word_hour != 12:
                 word_hour += 12
         else:
-            # No period keyword — use convention: 1-8 → PM, 9-12 → AM
             if word_hour <= 8:
                 word_hour += 12
-        return word_hour  # ignore word_minute for slot selection (hour granularity)
+        return word_hour + word_minute / 60.0
 
-    # ── Standalone period fallbacks (no specific hour given) ─────────────────
+    # ── Standalone period fallbacks ───────────────────────────────────────────
     if is_morning:
-        return 10
+        return 10.0
     if is_afternoon:
-        return 14
+        return 14.0
     if is_evening or is_night:
-        return 17
+        return 17.0
 
-    # ── Digit-based parsing ───────────────────────────────────────────────────
+    # ── Digit-based parsing (preserves minutes) ───────────────────────────────
     m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", pt)
     if not m:
         return None
 
     hour = int(m.group(1))
+    minutes = int(m.group(2)) if m.group(2) else 0
     ampm = m.group(3)
 
     if ampm == "pm" and hour != 12:
@@ -232,10 +225,9 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
     elif ampm == "am" and hour == 12:
         hour = 0
     elif ampm is None and hour <= 8:
-        # Ambiguous single digit with no am/pm — assume PM
         hour += 12
 
-    return hour
+    return hour + minutes / 60.0
 
 
 # ── Slot generation ───────────────────────────────────────────────────────────
@@ -510,6 +502,18 @@ def list_doctors(specialty: Optional[str] = None) -> dict:
     return {"success": True, "doctors": formatted, "count": len(formatted)}
 
 
+_SPECIALTY_ALIASES: dict[str, str] = {
+    "heart": "cardio", "cardiac": "cardio",
+    "bone": "orthop", "knee": "orthop", "joint": "orthop", "leg": "orthop",
+    "eye": "ophthalm", "vision": "ophthalm",
+    "stomach": "gastro", "digestive": "gastro",
+    "brain": "neuro", "nerve": "neuro",
+    "cancer": "oncol", "tumor": "oncol",
+    "child": "pediatr", "kids": "pediatr",
+    "general": "internal", "physician": "internal", "fever": "internal",
+}
+
+
 def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Optional[dict]:
     doctors = COMPANY_CONFIG.get("doctors", [])
     if doctor_name:
@@ -519,6 +523,11 @@ def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Option
                 return d
     if specialty:
         spec_lower = specialty.lower()
+        # Apply alias map so "general physician" → "internal" → matches "Internal Medicine"
+        for word, mapped in _SPECIALTY_ALIASES.items():
+            if word in spec_lower:
+                spec_lower = mapped
+                break
         for d in doctors:
             if spec_lower in d["specialty"].lower():
                 return d
@@ -685,7 +694,7 @@ def book_appointment(
             pref_hour = _parse_preferred_hour(preferred_time)
             if pref_hour is not None:
                 diff = abs(chosen.hour + chosen.minute / 60 - pref_hour)
-                if diff > 0.75:  # more than 45 min off
+                if diff > 0.25:  # more than 15 min off
                     success_result["note"] = (
                         f"Booked at {booked_spoken} ({booked_digit}) — nearest available slot. "
                         f"Requested time '{preferred_time}' had no exact match. "

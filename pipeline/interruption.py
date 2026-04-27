@@ -43,6 +43,7 @@ class InterruptionController:
         self._interrupted = False
         self._debouncing = False
         self._event = asyncio.Event()
+        self._reset_gen = 0  # incremented by reset() to cancel in-flight debounces
 
     @property
     def is_interrupted(self) -> bool:
@@ -58,9 +59,12 @@ class InterruptionController:
         if self._interrupted or self._debouncing:
             return
         self._debouncing = True
+        gen = self._reset_gen
         await asyncio.sleep(self._DEBOUNCE_SECS)
         self._debouncing = False
-        # Check again — reset() may have been called during the sleep
+        # Discard if reset() was called during the sleep
+        if self._reset_gen != gen:
+            return
         if not self._interrupted:
             self._interrupted = True
             self._event.set()
@@ -70,6 +74,7 @@ class InterruptionController:
         """Call this before starting each new TTS utterance."""
         self._interrupted = False
         self._debouncing = False
+        self._reset_gen += 1
         self._event.clear()
 
     async def wait_for_interruption(self) -> None:

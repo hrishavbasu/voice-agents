@@ -1,9 +1,11 @@
 """
-LLM service — OpenRouter (OpenAI-compatible) with streaming.
+LLM service — Google Gemini (OpenAI-compatible) with streaming.
 
-Prototype: meta-llama/llama-3.3-70b-instruct:free  (zero cost)
-Production: change LLM_MODEL in .env to "groq/llama-3.3-70b" or
-            "anthropic/claude-haiku-4-5" — no code change needed.
+Primary: Google Gemini 2.0 Flash (gemini-2.0-flash)
+Fallback chain: Cerebras → OpenRouter free models.
+
+To switch model, set LLM_MODEL in .env, e.g.:
+    LLM_MODEL=gemini-1.5-pro
 
 Usage:
     async for sentence in stream_response(messages, tools):
@@ -21,8 +23,8 @@ from openai import AsyncOpenAI, RateLimitError, NotFoundError
 from config.base_config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
-    GROQ_API_KEY,
-    GROQ_BASE_URL,
+    GOOGLE_API_KEY,
+    GOOGLE_BASE_URL,
     CEREBRAS_API_KEY,
     CEREBRAS_BASE_URL,
     LLM_PROVIDER,
@@ -33,23 +35,55 @@ from config.base_config import (
 
 logger = logging.getLogger(__name__)
 
-# Primary: Groq (lowest latency). Fallback chain: Cerebras → OpenRouter free.
-if LLM_PROVIDER == "groq" and GROQ_API_KEY:
-    _client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
-    logger.info("LLM provider: Groq model=%s", LLM_MODEL)
+_KNOWN_SAMPLE_GOOGLE_KEYS = {
+    "AIzaSyAYizSqADqjEFrAzuU4JFR4pkT3o5noY1o",
+}
+
+
+def _is_usable_google_key(key: str) -> bool:
+    """Reject empty or known sample keys."""
+    return bool(key) and key not in _KNOWN_SAMPLE_GOOGLE_KEYS
+
+
+# Primary: Google Gemini. Fallback chain: Cerebras → OpenRouter free.
+if LLM_PROVIDER == "google" and _is_usable_google_key(GOOGLE_API_KEY):
+    # Disable SDK auto-retries so we can fail over quickly on 429.
+    _client = AsyncOpenAI(
+        api_key=GOOGLE_API_KEY,
+        base_url=GOOGLE_BASE_URL,
+        max_retries=0,
+    )
+    logger.info("LLM provider: Google Gemini model=%s", LLM_MODEL)
 else:
-    _client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    if LLM_PROVIDER == "google":
+        logger.error(
+            "Google LLM provider requested but GOOGLE_API_KEY is missing or sample key. "
+            "Set your paid key in .env to avoid 429 bursts."
+        )
+    _client = AsyncOpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_BASE_URL,
+        max_retries=0,
+    )
     logger.info("LLM provider: OpenRouter model=%s", LLM_MODEL)
 
-_cerebras_client = AsyncOpenAI(api_key=CEREBRAS_API_KEY, base_url=CEREBRAS_BASE_URL)
-_openrouter_client = AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+_cerebras_client = AsyncOpenAI(
+    api_key=CEREBRAS_API_KEY,
+    base_url=CEREBRAS_BASE_URL,
+    max_retries=0,
+)
+_openrouter_client = AsyncOpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url=OPENROUTER_BASE_URL,
+    max_retries=0,
+)
 
-# Sentence boundary — split on .  !  ? followed by whitespace
-# Lookbehinds prevent splitting after known abbreviations (ASCII + Devanagari).
-# Also guarded by word-count check in stream_response: fragments < 3 words are
-# merged back (catches initials like "एस.वी." not coverable by fixed lookbehind).
+# Sentence boundary — two cases:
+#   1. Latin .!? with lookbehinds to skip abbreviations (Dr., Mr., etc.)
+#   2. Devanagari danda । and double-danda ॥ — always sentence boundaries,
+#      no abbreviation ambiguity; allow zero or more trailing spaces.
 _SENTENCE_RE = re.compile(
-    r"(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Sr\.)(?<!Jr\.)(?<!Mrs\.)(?<!Prof\.)(?<!डॉ\.)(?<=[.!?])\s+"
+    r"(?:(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Sr\.)(?<!Jr\.)(?<!Mrs\.)(?<!Prof\.)(?<!डॉ\.)(?<=[.!?])\s+|(?<=[।॥])\s*)"
 )
 
 
@@ -73,7 +107,7 @@ async def stream_response(
         "temperature": LLM_TEMPERATURE,
         "stream": True,
     }
-    if LLM_PROVIDER != "groq":
+    if LLM_PROVIDER not in ("google",):
         kwargs["extra_headers"] = {
             "X-Title": "Customer Support AI",
             "HTTP-Referer": "https://customer-support-mvp.local",
@@ -89,14 +123,14 @@ async def stream_response(
         try:
             stream = await _client.chat.completions.create(**kwargs)
         except RateLimitError:
-            # Groq quota exhausted — try Cerebras first (same speed), then OpenRouter
+            # Google quota exhausted — try Cerebras first (same speed), then OpenRouter
             stream = None
 
-            # 1. Cerebras — ~600ms, free, higher limits than Groq
+            # 1. Cerebras — ~600ms, free, higher limits
             if CEREBRAS_API_KEY:
                 try:
                     cerebras_kwargs = {**kwargs, "model": "qwen-3-235b-a22b-instruct-2507"}
-                    logger.warning("Groq 429 — trying Cerebras")
+                    logger.warning("Google 429 — trying Cerebras")
                     stream = await _cerebras_client.chat.completions.create(**cerebras_kwargs)
                 except (RateLimitError, NotFoundError):
                     logger.warning("Cerebras unavailable, trying OpenRouter")
@@ -104,8 +138,8 @@ async def stream_response(
             # 2. OpenRouter free models — slower but unlimited
             if stream is None:
                 _OR_FALLBACKS = [
-                    "openai/gpt-oss-120b:free",
                     "meta-llama/llama-3.3-70b-instruct:free",
+                    "openai/gpt-oss-120b:free",
                     "nousresearch/hermes-3-llama-3.1-405b:free",
                 ]
                 or_kwargs = {**kwargs, "extra_headers": {
@@ -158,9 +192,10 @@ async def stream_response(
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                # Fewer than 3 words = almost certainly an abbreviation fragment
-                # (e.g. "डॉ.", "एस.वी.") — merge back rather than yield a micro-TTS call.
-                if len(sentence.split()) < 3:
+                # Fewer than 3 words ending in a Latin period = likely an
+                # abbreviation fragment (e.g. "डॉ.", "एस.वी.") — merge back.
+                # Danda-terminated sentences (।) are always genuine regardless of length.
+                if len(sentence.split()) < 3 and not sentence.endswith(("।", "॥", "!", "?")):
                     parts[-1] = sentence + " " + parts[-1]
                     continue
                 logger.debug("LLM sentence: %s", sentence)

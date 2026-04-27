@@ -1,9 +1,11 @@
 """
-TTS service — supports ElevenLabs (Indian voice, primary), Deepgram Aura
+TTS service — supports ElevenLabs (Indian voice, primary), Sarvam Bulbul,
+Deepgram Aura
 (prototype/free), and Cartesia Sonic (production).
 
 Selected by TTS_PROVIDER env var:
   "elevenlabs"  — Indian English voice via ElevenLabs (recommended)
+  "sarvam"      — Sarvam Bulbul (India-language specialist)
   "deepgram"    — Deepgram Aura free tier
   "cartesia"    — Cartesia Sonic production
 
@@ -30,6 +32,7 @@ from config.base_config import (
     CARTESIA_VOICE_ID,
     TTS_SAMPLE_RATE,
     TTS_ENCODING,
+    TTS_ALLOW_FALLBACK,
     AZURE_TTS_VOICE,
 )
 
@@ -46,11 +49,12 @@ FILLER_TEXTS = [
 class TTSService:
     """Streaming TTS with cancellation support for barge-in."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_format: str | None = None) -> None:
         self._cancelled = False
         self._provider = TTS_PROVIDER.lower()
-        # Shared mutable flag passed into elevenlabs_synthesize for mid-stream cancel
         self._cancel_flag: list = [False]
+        # None → provider default (ulaw_8000 for telephony, pcm_16000 for browser)
+        self._output_format = output_format
 
     def cancel(self) -> None:
         """Signal that the current synthesis stream should be abandoned."""
@@ -77,13 +81,20 @@ class TTSService:
                         return
                     yield chunk
             except Exception as exc:
-                logger.warning(
-                    "ElevenLabs failed (%s) — falling back to Deepgram TTS", exc
-                )
-                async for chunk in self._deepgram(text):
-                    if self._cancelled:
-                        return
-                    yield chunk
+                if TTS_ALLOW_FALLBACK:
+                    logger.warning(
+                        "ElevenLabs failed (%s) — falling back to Deepgram TTS", exc
+                    )
+                    async for chunk in self._deepgram(text):
+                        if self._cancelled:
+                            return
+                        yield chunk
+                else:
+                    logger.error(
+                        "ElevenLabs failed (%s) and fallback is disabled; no audio generated",
+                        exc,
+                    )
+                    return
         elif self._provider == "azure":
             try:
                 async for chunk in self._azure(text):
@@ -91,18 +102,46 @@ class TTSService:
                         return
                     yield chunk
             except Exception as exc:
-                logger.warning(
-                    "Azure TTS failed (%s) — falling back to Deepgram TTS", exc
-                )
-                async for chunk in self._deepgram(text):
-                    if self._cancelled:
-                        return
-                    yield chunk
+                if TTS_ALLOW_FALLBACK:
+                    logger.warning(
+                        "Azure TTS failed (%s) — falling back to Deepgram TTS", exc
+                    )
+                    async for chunk in self._deepgram(text):
+                        if self._cancelled:
+                            return
+                        yield chunk
+                else:
+                    logger.error(
+                        "Azure TTS failed (%s) and fallback is disabled; no audio generated",
+                        exc,
+                    )
+                    return
         elif self._provider == "cartesia":
             async for chunk in self._cartesia(text):
                 if self._cancelled:
                     return
                 yield chunk
+        elif self._provider == "sarvam":
+            try:
+                async for chunk in self._sarvam(text):
+                    if self._cancelled:
+                        return
+                    yield chunk
+            except Exception as exc:
+                if TTS_ALLOW_FALLBACK:
+                    logger.warning(
+                        "Sarvam TTS failed (%s) — falling back to Deepgram TTS", exc
+                    )
+                    async for chunk in self._deepgram(text):
+                        if self._cancelled:
+                            return
+                        yield chunk
+                else:
+                    logger.error(
+                        "Sarvam TTS failed (%s) and fallback is disabled; no audio generated",
+                        exc,
+                    )
+                    return
         else:
             async for chunk in self._deepgram(text):
                 if self._cancelled:
@@ -120,17 +159,29 @@ class TTSService:
 
     async def _elevenlabs(self, text: str, voice_id: str | None = None) -> AsyncIterator[bytes]:
         from services.tts_elevenlabs import elevenlabs_synthesize
-        async for chunk in elevenlabs_synthesize(text, self._cancel_flag, voice_id=voice_id):
+        fmt = self._output_format or "ulaw_8000"
+        async for chunk in elevenlabs_synthesize(text, self._cancel_flag, voice_id=voice_id, output_format=fmt):
+            yield chunk
+
+    async def _sarvam(self, text: str) -> AsyncIterator[bytes]:
+        from services.tts_sarvam import sarvam_synthesize
+        fmt = self._output_format or "ulaw_8000"
+        async for chunk in sarvam_synthesize(text, self._cancel_flag, output_format=fmt):
             yield chunk
 
     # ── Deepgram Aura (REST streaming, free tier) ─────────────────────────────
 
     async def _deepgram(self, text: str) -> AsyncIterator[bytes]:
         url = "https://api.deepgram.com/v1/speak"
+        # Browser mode requests pcm_16000 → map to Deepgram linear16 16kHz
+        if self._output_format == "pcm_16000":
+            enc, sr = "linear16", 16000
+        else:
+            enc, sr = TTS_ENCODING, TTS_SAMPLE_RATE
         params = {
             "model": TTS_VOICE_ID or "aura-asteria-en",
-            "encoding": TTS_ENCODING,
-            "sample_rate": TTS_SAMPLE_RATE,
+            "encoding": enc,
+            "sample_rate": sr,
             "container": "none",
         }
         headers = {

@@ -86,6 +86,19 @@ class TelephonySession:
         silence = bytes([0xFF] * int(duration_ms * 8))  # 8 bytes/ms at 8kHz
         await self.send_audio(silence)
 
+    async def clear_playback_buffer(self) -> None:
+        """Best-effort carrier buffer flush for immediate barge-in."""
+        if not self._active:
+            return
+        try:
+            if self._provider == "twilio" and self._stream_sid:
+                await self._ws.send_text(json.dumps({
+                    "event": "clear",
+                    "streamSid": self._stream_sid,
+                }))
+        except Exception as exc:
+            logger.debug("clear_playback_buffer ignored: %s", exc)
+
     async def transfer(self, destination: str) -> None:
         """
         Transfer the call to a PSTN number or SIP URI.
@@ -239,3 +252,56 @@ class TelephonySession:
                 headers={"Authorization": f"Bearer {TELNYX_API_KEY}"},
                 json={},
             )
+
+
+class BrowserTelephonySession:
+    """
+    Lightweight telephony session for local browser testing.
+
+    Expects:
+      - Incoming binary WebSocket messages: raw PCM16 signed-integer 16kHz audio
+      - Outgoing: binary WebSocket messages containing raw PCM16 16kHz TTS audio
+        (ElevenLabs pcm_16000 format)
+
+    No Twilio/Telnyx JSON wrapping — plain binary frames only.
+    """
+
+    def __init__(self, websocket: WebSocket, on_audio: AudioCallback) -> None:
+        self._ws = websocket
+        self._on_audio = on_audio
+        self._active = True
+        self.stream_ready = asyncio.Event()
+
+    async def receive_loop(self) -> None:
+        """Read binary PCM16 chunks from the browser and forward to STT."""
+        self.stream_ready.set()  # no "start" handshake needed for browser
+        try:
+            while self._active:
+                data = await self._ws.receive_bytes()
+                if data:
+                    await self._on_audio(data)
+        except Exception as exc:
+            logger.info("BrowserTelephonySession receive_loop ended: %s", exc)
+        finally:
+            self._active = False
+
+    async def send_audio(self, audio_chunk: bytes) -> None:
+        """Send raw PCM16 audio bytes to the browser."""
+        if not self._active:
+            return
+        try:
+            await self._ws.send_bytes(audio_chunk)
+        except Exception as exc:
+            logger.warning("BrowserTelephonySession send_audio error: %s", exc)
+
+    async def send_silence(self, duration_ms: int = 100) -> None:
+        # PCM16 silence is zero bytes
+        silence = bytes(int(duration_ms * 16000 / 1000) * 2)  # 2 bytes/sample at 16kHz
+        await self.send_audio(silence)
+
+    async def transfer(self, destination: str) -> None:
+        logger.info("Browser session — transfer to %s (no-op)", destination)
+        self._active = False
+
+    async def hangup(self) -> None:
+        self._active = False

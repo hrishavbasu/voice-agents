@@ -32,7 +32,7 @@ TOOL_REGISTRY: dict[str, dict] = {
                         "type": "string",
                         "description": (
                             "Date to check availability for "
-                            "(e.g. 'tomorrow', 'Monday', '20 April'). "
+                            "(e.g. 'tomorrow', 'Monday', '20 April', 'कल', 'सोमवार'). "
                             "Leave blank to check next available day."
                         ),
                     },
@@ -118,7 +118,7 @@ TOOL_REGISTRY: dict[str, dict] = {
                         "type": "string",
                         "description": (
                             "Preferred time as mentioned by caller "
-                            "(e.g. 'morning', '11am', 'afternoon', '3pm')."
+                            "(e.g. 'morning', '11am', 'afternoon', '3pm', 'सुबह', 'शाम')."
                         ),
                     },
                 },

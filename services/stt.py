@@ -17,7 +17,6 @@ from typing import Callable, Awaitable, Optional
 
 from deepgram import (
     DeepgramClient,
-    DeepgramClientOptions,
     LiveOptions,
     LiveTranscriptionEvents,
 )
@@ -29,6 +28,8 @@ from config.base_config import (
     STT_SMART_FORMAT,
     STT_INTERIM_RESULTS,
     STT_ENDPOINTING_MS,
+    STT_UTTERANCE_END_MS,
+    STT_MIN_WORDS,
     STT_CONFIDENCE_THRESHOLD,
 )
 
@@ -45,13 +46,19 @@ class DeepgramSTT:
         self,
         on_transcript: TranscriptCallback,
         on_speech_started: Optional[SpeechStartedCallback] = None,
+        encoding: str = "mulaw",
+        sample_rate: int = 8000,
     ) -> None:
         self._on_transcript = on_transcript
         self._on_speech_started = on_speech_started
         self._loop = asyncio.get_event_loop()
+        self._encoding = encoding
+        self._sample_rate = sample_rate
 
-        options = DeepgramClientOptions(options={"keepalive": "true"})
-        self._client = DeepgramClient(DEEPGRAM_API_KEY, config=options)
+        # Keepalive option in client config can cause 400 handshake failures on
+        # some Deepgram accounts. Use default client and explicit app-level
+        # keep_alive() loop below.
+        self._client = DeepgramClient(DEEPGRAM_API_KEY)
         self._connection = None
 
         # Accumulate is_final chunks until speech_final — prevents triggering
@@ -73,24 +80,83 @@ class DeepgramSTT:
             LiveTranscriptionEvents.Error, self._handle_error
         )
 
-        live_opts = LiveOptions(
-            model=STT_MODEL,
-            language=STT_LANGUAGE,
-            smart_format=STT_SMART_FORMAT,
-            interim_results=STT_INTERIM_RESULTS,
-            endpointing=STT_ENDPOINTING_MS,
-            utterance_end_ms="1200",
-            encoding="mulaw",
-            sample_rate=8000,
-            channels=1,
-            diarize=True,  # assigns speaker labels — lets us filter background speakers
-        )
-        logger.info("Deepgram STT language: %s", STT_LANGUAGE)
+        # Some Deepgram accounts reject specific realtime option combinations.
+        # Try progressively simpler profiles before failing the call.
+        attempts = [
+            # Fastest/most reliable profile first for Twilio real-time calls.
+            {
+                "label": "minimal-auto-lang",
+                "kwargs": {
+                    "model": "nova-2",
+                    "encoding": self._encoding,
+                    "sample_rate": self._sample_rate,
+                    "channels": 1,
+                },
+            },
+            {
+                "label": "minimal-hi",
+                "kwargs": {
+                    "model": "nova-2",
+                    "language": "hi",
+                    "encoding": self._encoding,
+                    "sample_rate": self._sample_rate,
+                    "channels": 1,
+                },
+            },
+            {
+                "label": "full",
+                "kwargs": {
+                    "model": STT_MODEL,
+                    "language": STT_LANGUAGE,
+                    "smart_format": STT_SMART_FORMAT,
+                    "interim_results": STT_INTERIM_RESULTS,
+                    "endpointing": STT_ENDPOINTING_MS,
+                    "utterance_end_ms": str(STT_UTTERANCE_END_MS),
+                    "encoding": self._encoding,
+                    "sample_rate": self._sample_rate,
+                    "channels": 1,
+                    "diarize": True,
+                },
+            },
+            {
+                "label": "no-diarize",
+                "kwargs": {
+                    "model": STT_MODEL,
+                    "language": STT_LANGUAGE,
+                    "smart_format": STT_SMART_FORMAT,
+                    "interim_results": STT_INTERIM_RESULTS,
+                    "endpointing": STT_ENDPOINTING_MS,
+                    "utterance_end_ms": str(STT_UTTERANCE_END_MS),
+                    "encoding": self._encoding,
+                    "sample_rate": self._sample_rate,
+                    "channels": 1,
+                    "diarize": False,
+                },
+            },
+        ]
+        started = False
+        last_attempt = None
+        for cfg in attempts:
+            last_attempt = cfg
+            live_opts = LiveOptions(**cfg["kwargs"])
+            logger.info(
+                "Deepgram STT connect attempt profile=%s kwargs=%s",
+                cfg["label"], cfg["kwargs"]
+            )
+            started = await self._connection.start(live_opts)
+            if started:
+                break
+            logger.warning(
+                "Deepgram STT connect attempt failed (profile=%s)",
+                cfg["label"]
+            )
 
-        started = await self._connection.start(live_opts)
         if not started:
-            raise RuntimeError("Failed to open Deepgram WebSocket")
-        logger.info("Deepgram STT connected (model=%s)", STT_MODEL)
+            raise RuntimeError(f"Failed to open Deepgram WebSocket (last_attempt={last_attempt})")
+        logger.info(
+            "Deepgram STT connected (profile=%s kwargs=%s)",
+            last_attempt["label"], last_attempt["kwargs"]
+        )
 
         # Explicit keepalive every 8s — prevents Deepgram 1011 timeout when
         # caller's mic is suppressed during TTS playback (echo cancellation).
@@ -193,9 +259,9 @@ class DeepgramSTT:
 
                 self._utterance_parts = []
 
-                # Min 2-word gate — single-word bursts are almost always background noise
-                if len(full_utterance.split()) < 2:
-                    logger.debug("STT: discarding short utterance (likely background): %r", full_utterance)
+                # Keep short utterances configurable for faster barge-in responses.
+                if len(full_utterance.split()) < STT_MIN_WORDS:
+                    logger.debug("STT: discarding short utterance (min_words=%d): %r", STT_MIN_WORDS, full_utterance)
                     return
 
                 logger.info("STT utterance complete: %s", full_utterance)

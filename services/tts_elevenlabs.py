@@ -30,17 +30,22 @@ async def elevenlabs_synthesize(
     text: str,
     cancelled_flag: list,
     voice_id: str | None = None,
+    output_format: str = "ulaw_8000",
 ) -> AsyncIterator[bytes]:
     """
-    Stream μ-law 8kHz audio from ElevenLabs.
+    Stream audio from ElevenLabs.
 
     Args:
         text:           Text to synthesise.
         cancelled_flag: Mutable list [False]; flip to [True] to abort mid-stream.
         voice_id:       Override voice (defaults to ELEVENLABS_VOICE_ID env var).
+        output_format:  ElevenLabs output format.
+                        "ulaw_8000"   — Twilio μ-law 8kHz (default, telephony)
+                        "pcm_16000"   — raw PCM16 16kHz (browser AudioContext)
+                        "mp3_44100_64"— MP3 44.1kHz 64kbps (browser Audio element)
 
     Yields:
-        Raw μ-law 8kHz audio bytes compatible with Twilio Media Streams.
+        Raw audio bytes in the requested format.
     """
     vid = voice_id or ELEVENLABS_VOICE_ID or "m28sDRnudtExG3WLAufB"
     url = f"{_BASE}/text-to-speech/{vid}/stream"
@@ -49,12 +54,11 @@ async def elevenlabs_synthesize(
         "xi-api-key": ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
     }
-    # output_format=ulaw_8000 → 8kHz μ-law, no container — exact Twilio format
-    params = {"output_format": "ulaw_8000"}
+    params = {"output_format": output_format}
     payload = {
         "text": text,
-        # eleven_multilingual_v2 — full SSML + <phoneme> support; slightly higher latency than turbo
-        "model_id": "eleven_multilingual_v2",
+        # eleven_turbo_v2_5 — ~250 ms TTFB vs ~500 ms for multilingual_v2; supports Hindi+English
+        "model_id": "eleven_turbo_v2_5",
         # Tuned for natural conversation — lower stability = more expressive,
         # style > 0 adds warmth, similarity_boost preserves voice character.
         "voice_settings": {

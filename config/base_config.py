@@ -24,12 +24,18 @@ STT_MODEL = os.getenv("STT_MODEL", "nova-3")
 STT_LANGUAGE = os.getenv("STT_LANGUAGE", "hi")      # Devanagari Hindi (Nova-3)
 STT_SMART_FORMAT = True
 STT_INTERIM_RESULTS = True
-STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "1400"))
+STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "300"))
+STT_UTTERANCE_END_MS = int(os.getenv("STT_UTTERANCE_END_MS", "700"))
+STT_MIN_WORDS = int(os.getenv("STT_MIN_WORDS", "1"))
 STT_CONFIDENCE_THRESHOLD = float(os.getenv("STT_CONFIDENCE_THRESHOLD", "0.88"))
+# Merge window for final transcript fragments before sending to LLM.
+TRANSCRIPT_MERGE_HOLD_MS = int(os.getenv("TRANSCRIPT_MERGE_HOLD_MS", "60"))
 KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))  # 5 min
+VOICE_MAX_CONTEXT_MESSAGES = int(os.getenv("VOICE_MAX_CONTEXT_MESSAGES", "6"))
 
 # TTS options
-# "elevenlabs" (Indian voice, recommended) | "deepgram" (prototype) | "cartesia" (production)
+# "elevenlabs" (Indian voice, recommended) | "sarvam" (India-language specialist)
+# | "deepgram" (prototype) | "cartesia" (production)
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
 TTS_VOICE_ID = os.getenv(
@@ -39,6 +45,7 @@ TTS_VOICE_ID = os.getenv(
 CARTESIA_VOICE_ID = os.getenv("CARTESIA_VOICE_ID", "")
 TTS_SAMPLE_RATE = int(os.getenv("TTS_SAMPLE_RATE", "8000"))  # Twilio μ-law 8kHz
 TTS_ENCODING = os.getenv("TTS_ENCODING", "mulaw")
+TTS_ALLOW_FALLBACK = os.getenv("TTS_ALLOW_FALLBACK", "true").lower() == "true"
 
 # ElevenLabs (Indian English voice — primary TTS for clinic agent)
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
@@ -56,22 +63,28 @@ AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "")
 AZURE_TTS_REGION = os.getenv("AZURE_TTS_REGION", "eastus")
 AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
 
+# Sarvam Bulbul TTS (India-language specialist)
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
+SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "priya")
+
 # ── LLM ───────────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Groq — direct API (lowest latency)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Google Gemini — OpenAI-compatible endpoint (primary LLM)
+# Intentionally no default key: must come from environment.
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
-# Cerebras — same speed as Groq, higher free limits
+# Cerebras — fallback LLM
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 
-# LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "200"))
+# LLM_PROVIDER: "google" (default) | "openrouter" (fallback)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "500"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))
 LLM_STREAM = True
 

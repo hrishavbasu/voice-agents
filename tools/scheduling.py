@@ -29,6 +29,53 @@ _HOUR_WORDS = {
     7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve",
 }
 
+_HINDI_WEEKDAYS = {
+    "सोमवार": "monday",
+    "मंगलवार": "tuesday",
+    "बुधवार": "wednesday",
+    "गुरुवार": "thursday",
+    "बृहस्पतिवार": "thursday",
+    "शुक्रवार": "friday",
+    "शनिवार": "saturday",
+    "रविवार": "sunday",
+}
+
+_DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+
+
+def _normalize_input(text: str) -> str:
+    return text.translate(_DEVANAGARI_DIGITS).strip().lower()
+
+
+def _fee_spoken_en(value: Optional[int]) -> str:
+    if value is None:
+        return "fee will be shared by the hospital"
+    common = {
+        1500: "one thousand five hundred rupees",
+        1700: "one thousand seven hundred rupees",
+        1800: "one thousand eight hundred rupees",
+        2000: "two thousand rupees",
+        2300: "two thousand three hundred rupees",
+        2500: "two thousand five hundred rupees",
+        3000: "three thousand rupees",
+    }
+    return common.get(value, f"{value} rupees")
+
+
+def _fee_spoken_hi(value: Optional[int]) -> str:
+    if value is None:
+        return "फीस अस्पताल टीम बताएगी"
+    common = {
+        1500: "एक हज़ार पांच सौ रुपये",
+        1700: "एक हज़ार सात सौ रुपये",
+        1800: "एक हज़ार आठ सौ रुपये",
+        2000: "दो हज़ार रुपये",
+        2300: "दो हज़ार तीन सौ रुपये",
+        2500: "दो हज़ार पांच सौ रुपये",
+        3000: "तीन हज़ार रुपये",
+    }
+    return common.get(value, f"{value} रुपये")
+
 
 def _time_to_spoken(dt: datetime) -> str:
     """Convert a datetime to a natural English spoken time string.
@@ -88,16 +135,18 @@ def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     Returns None if unparseable.
     """
     today = datetime.now(_tz()).date()
-    pd = preferred_date.lower().strip()
+    pd = _normalize_input(preferred_date)
+    for hi, en in _HINDI_WEEKDAYS.items():
+        pd = pd.replace(hi, en)
 
     # Relative
-    if pd in ("today", "aaj"):
+    if pd in ("today", "aaj", "आज"):
         return today
-    if pd in ("tomorrow", "kal", "kl"):
+    if pd in ("tomorrow", "kal", "kl", "कल"):
         return today + timedelta(days=1)
-    if "day after" in pd or "parso" in pd:
+    if "day after" in pd or "parso" in pd or "परसों" in pd:
         return today + timedelta(days=2)
-    if "next week" in pd:
+    if "next week" in pd or "अगले हफ्ते" in pd:
         return today + timedelta(days=7)
 
     # Weekday name: find next occurrence
@@ -105,6 +154,8 @@ def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     for i, name in enumerate(weekdays):
         if name in pd or name[:3] in pd:
             days_ahead = (i - today.weekday()) % 7
+            if "next " in pd or "अगले" in pd:
+                days_ahead = days_ahead or 7
             if days_ahead == 0:
                 days_ahead = 7  # "Monday" means *next* Monday if today is Monday
             return today + timedelta(days=days_ahead)
@@ -141,36 +192,36 @@ def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     return None
 
 
-def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
+def _parse_preferred_hour(preferred_time: str) -> Optional[float]:
     """
-    Parse caller's preferred time to a 24h hour integer.
-    Handles: "4pm", "4:30 PM", "16:30", "morning", "evening", "shaam",
-             "six thirty in the evening", "saade chhe baje".
-
-    Word-form numbers are resolved BEFORE period keywords so that
-    "six thirty in the evening" → 18, not 17 (the evening-period default).
+    Parse caller's preferred time to a 24h float (e.g. 18.5 for 6:30 PM).
+    Returns float so _pick_best_slot can distinguish 6:00 from 6:30.
     """
-    pt = preferred_time.lower().strip()
+    pt = _normalize_input(preferred_time)
+    pt = (
+        pt.replace("सुबह", "morning")
+        .replace("दोपहर", "afternoon")
+        .replace("शाम", "evening")
+        .replace("रात", "night")
+    )
 
-    # ── Word-form hour numbers (English) ─────────────────────────────────────
     _WORD_HOURS = {
         "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
         "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
         "twelve": 12, "one o'clock": 1, "two o'clock": 2,
+        "ek": 1, "do": 2, "teen": 3, "char": 4, "chaar": 4, "paanch": 5,
+        "cheh": 6, "chhe": 6, "saat": 7, "aath": 8, "nau": 9, "das": 10,
+        "gyarah": 11, "baarah": 12,
     }
     _WORD_MINUTES = {
         "thirty": 30, "fifteen": 15, "forty five": 45, "forty-five": 45,
         "half past": 30, "quarter past": 15, "quarter to": -15,
     }
 
-    # Try to extract word-form hour (e.g. "six", "seven thirty", "half past six")
     word_hour: Optional[int] = None
     word_minute: int = 0
 
-    # "half past SIX" / "quarter past SEVEN"
-    m_half = re.search(
-        r"(half past|quarter past|quarter to)\s+(\w+)", pt
-    )
+    m_half = re.search(r"(half past|quarter past|quarter to)\s+(\w+)", pt)
     if m_half:
         adj = _WORD_MINUTES.get(m_half.group(1), 0)
         h = _WORD_HOURS.get(m_half.group(2))
@@ -178,7 +229,6 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
             word_hour = h
             word_minute = adj
 
-    # "SIX thirty" / "seven fifteen"
     if word_hour is None:
         for hw, hv in _WORD_HOURS.items():
             if re.search(r"\b" + hw + r"\b", pt):
@@ -189,42 +239,37 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
                         break
                 break
 
-    # ── Period keywords (used for AM/PM resolution or standalone fallback) ────
     is_morning   = any(w in pt for w in ["morning", "subah", "savere"])
     is_afternoon = any(w in pt for w in ["afternoon", "dopahar", "dupahr"])
     is_evening   = any(w in pt for w in ["evening", "shaam", "sham"])
     is_night     = any(w in pt for w in ["night", "raat"])
 
-    # ── If we parsed a word-form hour, apply AM/PM from period keyword ────────
     if word_hour is not None:
         if is_morning:
-            # Keep as-is (1-12 AM)
             if word_hour == 12:
                 word_hour = 0
         elif is_afternoon or is_evening or is_night:
-            # Convert to PM
             if word_hour != 12:
                 word_hour += 12
         else:
-            # No period keyword — use convention: 1-8 → PM, 9-12 → AM
             if word_hour <= 8:
                 word_hour += 12
-        return word_hour  # ignore word_minute for slot selection (hour granularity)
+        return word_hour + word_minute / 60.0
 
-    # ── Standalone period fallbacks (no specific hour given) ─────────────────
     if is_morning:
-        return 10
+        return 10.0
     if is_afternoon:
-        return 14
+        return 14.0
     if is_evening or is_night:
-        return 17
+        return 17.0
 
-    # ── Digit-based parsing ───────────────────────────────────────────────────
+    # ── Digit-based parsing (preserves minutes) ───────────────────────────────
     m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", pt)
     if not m:
         return None
 
     hour = int(m.group(1))
+    minutes = int(m.group(2)) if m.group(2) else 0
     ampm = m.group(3)
 
     if ampm == "pm" and hour != 12:
@@ -232,10 +277,9 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
     elif ampm == "am" and hour == 12:
         hour = 0
     elif ampm is None and hour <= 8:
-        # Ambiguous single digit with no am/pm — assume PM
         hour += 12
 
-    return hour
+    return hour + minutes / 60.0
 
 
 # ── Slot generation ───────────────────────────────────────────────────────────
@@ -388,7 +432,11 @@ def check_doctor_slots(
             "requested_date": target_date.strftime("%A, %d %B"),
             "next_available_date": next_date.strftime("%A, %d %B"),
             "slots_on_next_date": next_times,
+            "slots_on_next_date_objects": [_slot_payload(s) for s in next_slots[:6]],
             "available_days": available_days_display,
+            "fee_inr": doctor.get("fee_inr"),
+            "fee_spoken_en": _fee_spoken_en(doctor.get("fee_inr")),
+            "fee_spoken_hi": _fee_spoken_hi(doctor.get("fee_inr")),
         }
 
     slots = _slots_for_date(doctor, target_date)
@@ -406,7 +454,11 @@ def check_doctor_slots(
         "specialty": doctor["specialty"],
         "date": target_date.strftime("%A, %d %B"),
         "slots": _sample_slots_for_voice(slots),
+        "slot_objects": [_slot_payload(s) for s in slots[:6]],
         "slot_count": len(slots),
+        "fee_inr": doctor.get("fee_inr"),
+        "fee_spoken_en": _fee_spoken_en(doctor.get("fee_inr")),
+        "fee_spoken_hi": _fee_spoken_hi(doctor.get("fee_inr")),
     }
 
 
@@ -439,6 +491,26 @@ def _sample_slots_for_voice(slots: list[datetime]) -> list[str]:
     return [f"{_time_to_spoken(s)} ({s.strftime('%-I:%M %p')})" for s in selected]
 
 
+def _slot_payload(slot: datetime) -> dict:
+    digit = slot.strftime("%-I:%M %p")
+    spoken_en = _time_to_spoken(slot)
+    spoken_hi = (
+        spoken_en.replace("in the morning", "सुबह")
+        .replace("in the afternoon", "दोपहर")
+        .replace("in the evening", "शाम")
+        .replace("in the night", "रात")
+        .replace("half past", "साढ़े")
+        .replace("quarter past", "सवा")
+        .replace("quarter to", "पौने")
+    )
+    return {
+        "digit_time": digit,
+        "spoken_en": spoken_en,
+        "spoken_hi": spoken_hi,
+        "spoken_hinglish": spoken_hi,
+    }
+
+
 def _find_alternative_doctors(specialty: str, preferred_date: Optional[str]) -> list[dict]:
     """
     Find other doctors of the same specialty who have slots on the preferred date.
@@ -464,7 +536,11 @@ def _find_alternative_doctors(specialty: str, preferred_date: Optional[str]) -> 
                     "name": d["name"],
                     "specialty": d["specialty"],
                     "fee": f"₹{d.get('fee_inr', '?')}",
+                    "fee_inr": d.get("fee_inr"),
+                    "fee_spoken_en": _fee_spoken_en(d.get("fee_inr")),
+                    "fee_spoken_hi": _fee_spoken_hi(d.get("fee_inr")),
                     "available_slots_today": _sample_slots_for_voice(slots),
+                    "available_slot_objects": [_slot_payload(s) for s in slots[:6]],
                 })
 
     return alternatives
@@ -479,13 +555,21 @@ def list_doctors(specialty: Optional[str] = None) -> dict:
         kw = specialty.lower()
         aliases = {
             "heart": "cardio", "cardiac": "cardio",
+            "cardiology": "cardio", "कार्डियोलॉजी": "cardio", "हृदय": "cardio",
             "bone": "orthop", "knee": "orthop", "joint": "orthop", "leg": "orthop",
+            "orthopedic": "orthop", "ऑर्थोपेडिक": "orthop", "हड्डी": "orthop",
             "eye": "ophthalm", "vision": "ophthalm",
+            "नेत्र": "ophthalm", "आंख": "ophthalm",
             "stomach": "gastro", "digestive": "gastro",
+            "gastro": "gastro", "गैस्ट्रो": "gastro", "पेट": "gastro",
             "brain": "neuro", "nerve": "neuro",
+            "neuro": "neuro", "न्यूरो": "neuro", "दिमाग": "neuro",
             "cancer": "oncol", "tumor": "oncol",
+            "oncology": "oncol", "ऑन्कोलॉजी": "oncol",
             "child": "pediatr", "kids": "pediatr",
+            "pediatric": "pediatr", "बाल": "pediatr",
             "general": "internal", "fever": "internal",
+            "physician": "internal", "जनरल": "internal",
         }
         for word, mapped in aliases.items():
             if word in kw:
@@ -501,6 +585,9 @@ def list_doctors(specialty: Optional[str] = None) -> dict:
             "specialty": d["specialty"],
             "experience": f"{d.get('experience_years', '?')} years",
             "fee": f"₹{d.get('fee_inr', '?')}",
+            "fee_inr": d.get("fee_inr"),
+            "fee_spoken_en": _fee_spoken_en(d.get("fee_inr")),
+            "fee_spoken_hi": _fee_spoken_hi(d.get("fee_inr")),
             "available_days": days,
         }
         if d.get("qualification"):
@@ -508,6 +595,26 @@ def list_doctors(specialty: Optional[str] = None) -> dict:
         formatted.append(entry)
 
     return {"success": True, "doctors": formatted, "count": len(formatted)}
+
+
+_SPECIALTY_ALIASES: dict[str, str] = {
+    "heart": "cardio", "cardiac": "cardio",
+    "cardiology": "cardio", "कार्डियोलॉजी": "cardio", "हृदय": "cardio",
+    "bone": "orthop", "knee": "orthop", "joint": "orthop", "leg": "orthop",
+    "orthopedic": "orthop", "ऑर्थोपेडिक": "orthop", "हड्डी": "orthop",
+    "eye": "ophthalm", "vision": "ophthalm",
+    "नेत्र": "ophthalm", "आंख": "ophthalm",
+    "stomach": "gastro", "digestive": "gastro",
+    "gastro": "gastro", "गैस्ट्रो": "gastro", "पेट": "gastro",
+    "brain": "neuro", "nerve": "neuro",
+    "neuro": "neuro", "न्यूरो": "neuro", "दिमाग": "neuro",
+    "cancer": "oncol", "tumor": "oncol",
+    "oncology": "oncol", "ऑन्कोलॉजी": "oncol",
+    "child": "pediatr", "kids": "pediatr",
+    "pediatric": "pediatr", "बाल": "pediatr",
+    "general": "internal", "physician": "internal", "fever": "internal",
+    "जनरल": "internal",
+}
 
 
 def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Optional[dict]:
@@ -519,6 +626,10 @@ def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Option
                 return d
     if specialty:
         spec_lower = specialty.lower()
+        for word, mapped in _SPECIALTY_ALIASES.items():
+            if word in spec_lower:
+                spec_lower = mapped
+                break
         for d in doctors:
             if spec_lower in d["specialty"].lower():
                 return d
@@ -673,9 +784,13 @@ def book_appointment(
             "success": True,
             "slot": result["slot"],
             "slot_spoken": f"{booked_spoken} ({booked_digit})",
+            "slot_object": _slot_payload(chosen),
             "doctor": doctor["name"],
             "specialty": doctor["specialty"],
             "fee": f"₹{doctor.get('fee_inr', '?')}",
+            "fee_inr": doctor.get("fee_inr"),
+            "fee_spoken_en": _fee_spoken_en(doctor.get("fee_inr")),
+            "fee_spoken_hi": _fee_spoken_hi(doctor.get("fee_inr")),
             "event_id": result.get("event_id"),
         }
 
@@ -685,7 +800,7 @@ def book_appointment(
             pref_hour = _parse_preferred_hour(preferred_time)
             if pref_hour is not None:
                 diff = abs(chosen.hour + chosen.minute / 60 - pref_hour)
-                if diff > 0.75:  # more than 45 min off
+                if diff > 0.25:  # more than 15 min off
                     success_result["note"] = (
                         f"Booked at {booked_spoken} ({booked_digit}) — nearest available slot. "
                         f"Requested time '{preferred_time}' had no exact match. "

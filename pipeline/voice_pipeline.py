@@ -19,13 +19,19 @@ Usage (called from main.py WebSocket handler):
 """
 
 import asyncio
+from functools import lru_cache
 import logging
 import random
 import re
 import time
 from typing import Optional
 
-from config.base_config import ELEVENLABS_VOICE_ID
+from config.base_config import (
+    ELEVENLABS_VOICE_ID,
+    ELEVENLABS_VOICE_ID_HINDI,
+    TRANSCRIPT_MERGE_HOLD_MS,
+    VOICE_MAX_CONTEXT_MESSAGES,
+)
 from config.company_config import COMPANY_CONFIG
 from pipeline.interruption import InterruptionController
 from pipeline.session import (
@@ -68,6 +74,43 @@ def _detect_language(text: str) -> str:
     return "english"
 
 
+def _quick_voice_reply(user_text: str, caller_language: str) -> str | None:
+    """Fast-path replies for very common intents to reduce perceived latency."""
+    txt = (user_text or "").strip()
+    low = txt.lower()
+    greet_hits = ("hello", "hi", "हेलो", "नमस्ते")
+
+    if len(txt.split()) <= 3 and any(k in low for k in greet_hits):
+        # Keep short greeting acknowledgements concise and Hindi-first.
+        if caller_language == "english":
+            return "Hello, please tell me which doctor or specialty you want to consult."
+        return "जी, बताइए। आपको किस डॉक्टर या किस विभाग में अपॉइंटमेंट चाहिए?"
+
+    if any(k in low for k in ("general", "physician", "internal", "जनरल", "फिजिशियन", "general physician")):
+        names = _cached_doctor_names_for_specialty("internal")
+        if names:
+            if caller_language == "english":
+                return f"For general physician consultation, we have {names}. Would you like me to check slots?"
+            return f"जनरल फिजिशियन के लिए हमारे पास {names} हैं। क्या मैं स्लॉट चेक करूँ?"
+        if caller_language == "english":
+            return "Sure, I can help with general physician appointments. Would you like me to check available slots?"
+        return "ज़रूर, मैं जनरल फिजिशियन के लिए अपॉइंटमेंट में मदद करूँगी। क्या मैं उपलब्ध स्लॉट चेक करूँ?"
+    return None
+
+
+@lru_cache(maxsize=16)
+def _cached_doctor_names_for_specialty(key: str) -> str:
+    doctors = COMPANY_CONFIG.get("doctors", [])
+    matched = [d.get("name", "") for d in doctors if key in d.get("specialty", "").lower()]
+    return ", ".join(n for n in matched[:3] if n)
+
+
+def _is_weak_english_signal(text: str) -> bool:
+    """Treat short English greetings as weak language evidence."""
+    low = (text or "").strip().lower()
+    return low in {"hello", "hi", "hey", "hello priya", "hi priya"}
+
+
 # Language-aware filler phrases — matched to detected caller language so the
 # bot doesn't suddenly switch to English mid Hindi/Hinglish conversation.
 TOOL_FILLERS: dict[str, list[str]] = {
@@ -92,11 +135,32 @@ TOOL_FILLERS: dict[str, list[str]] = {
     "hinglish": [
         "एक second, मैं check करती हूँ।",
         "बस एक पल।",
-        "मैं देखती हूँ।",
-        "Just a second.",
-        "Let me check करता हूँ।",
+        "मैं अभी check करती हूँ।",
+        "ठीक है, एक moment.",
+        "हाँ, मैं देखती हूँ।",
         "हाँ, मैं अभी देख लेती हूँ।",
     ],
+}
+_LANGUAGE_SWITCH_PATTERNS: dict[str, tuple[str, ...]] = {
+    "english": (
+        "speak in english",
+        "english me baat karo",
+        "english mein baat karo",
+        "please speak english",
+        "english please",
+    ),
+    "hindi": (
+        "hindi me baat karo",
+        "hindi mein baat karo",
+        "hindi mein bolo",
+        "hindi me bolo",
+        "sirf hindi",
+    ),
+    "hinglish": (
+        "hinglish",
+        "mix language",
+        "hindi english mix",
+    ),
 }
 # Keywords that require an immediate hard emergency response before LLM.
 # Language-inclusive: covers English + common Hindi/Hinglish equivalents.
@@ -118,12 +182,16 @@ class VoicePipeline:
         call_id: str,
         caller_phone: str,
         telephony_session,  # services.telephony.TelephonySession
+        browser: bool = False,
     ) -> None:
         self.call_id = call_id
         self.caller_phone = caller_phone
         self._telephony = telephony_session
+        self._browser = browser
 
-        self._tts = TTSService()
+        # Browser mode: ElevenLabs outputs PCM16 16kHz; browser plays via AudioContext
+        tts_format = "pcm_16000" if browser else None
+        self._tts = TTSService(output_format=tts_format)
         self._interruption = InterruptionController()
         self._stt: Optional[DeepgramSTT] = None
 
@@ -131,6 +199,7 @@ class VoicePipeline:
         self._crm_contact: Optional[dict] = None
         self._caller_language: str = "hinglish"  # updated on first clear detection
         self._tts_playing = False  # guard: only barge-in when TTS is active
+        self._playback_until = 0.0  # include carrier-side buffered playback window
 
         # Queue of final STT transcripts waiting to be processed
         self._transcript_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -148,10 +217,12 @@ class VoicePipeline:
         # Async CRM lookup (don't block greeting)
         asyncio.create_task(self._async_crm_lookup())
 
-        # Connect STT
+        # Connect STT — browser sends PCM16 16kHz; telephony uses mulaw 8kHz
         self._stt = DeepgramSTT(
             on_transcript=self._on_transcript,
             on_speech_started=self._on_speech_started,
+            encoding="linear16" if self._browser else "mulaw",
+            sample_rate=16000 if self._browser else 8000,
         )
         await self._stt.connect()
 
@@ -193,14 +264,16 @@ class VoicePipeline:
 
     async def _on_speech_started(self) -> None:
         """Barge-in: cancel TTS only if agent is currently speaking."""
-        if not self._tts_playing:
+        speaking_or_buffered = self._tts_playing or (time.monotonic() < self._playback_until)
+        if not speaking_or_buffered:
             return
         self._tts.cancel()
         await self._interruption.trigger()
+        await self._telephony.clear_playback_buffer()
         # Discard transcripts queued during TTS playback (stale/echo fragments)
         while not self._transcript_queue.empty():
             self._transcript_queue.get_nowait()
-        await self._telephony.send_silence(50)
+        await self._telephony.send_silence(20)
 
     # ── LLM processing loop ───────────────────────────────────────────────────
 
@@ -217,14 +290,15 @@ class VoicePipeline:
             except asyncio.TimeoutError:
                 continue
 
-            # 150ms hold: absorbs mid-thought pauses that slipped past endpointing.
+            # Short hold absorbs split-final fragments while keeping barge-in snappy.
             # Drains any follow-on transcript fragments into the same turn.
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(max(0, TRANSCRIPT_MERGE_HOLD_MS) / 1000.0)
             while not self._transcript_queue.empty():
                 extra = self._transcript_queue.get_nowait()
                 user_text = user_text + " " + extra
 
             await append_message(self.call_id, "user", user_text)
+            explicit_language = self._detect_language_override(user_text)
 
             # Hard emergency intercept — fires BEFORE LLM, deterministic.
             # LLM-based detection is not reliable enough for healthcare.
@@ -248,10 +322,22 @@ class VoicePipeline:
                 or (current_lang == "english" and detected != "english")  # upgrade
                 or (current_lang == "hinglish" and detected == "hindi")   # refine
             )
+            if detected == "english" and _is_weak_english_signal(user_text):
+                detected = current_lang or "hinglish"
+            if explicit_language:
+                await update_session(self.call_id, {"caller_language": explicit_language})
+                current_lang = explicit_language
+                self._caller_language = explicit_language
             if _allow_update and current_lang != detected:
                 await update_session(self.call_id, {"caller_language": detected})
                 current_lang = detected
                 self._caller_language = detected
+
+            quick = _quick_voice_reply(user_text, current_lang or "hinglish")
+            if quick:
+                await self._speak(quick)
+                await append_message(self.call_id, "assistant", quick)
+                continue
 
             messages = session.get("messages", []) if session else []
 
@@ -262,7 +348,7 @@ class VoicePipeline:
                 caller_language=current_lang,
             )
             # Keep last 10 messages only — reduces tokens per request by ~40%
-            full_messages = [{"role": "system", "content": system}] + messages[-10:]
+            full_messages = [{"role": "system", "content": system}] + messages[-VOICE_MAX_CONTEXT_MESSAGES:]
 
             # Stream LLM response
             assistant_text_parts = []
@@ -320,6 +406,16 @@ class VoicePipeline:
         text = _re.sub(r"\b(\d{1,3}),(\d{3})\b", r"\1\2", text)
         # Expand Devanagari abbreviations that TTS reads unnaturally
         text = text.replace("डॉ.", "डॉक्टर")
+        # Keep caller-address phrasing gender-neutral in Hindi while preserving
+        # female self-reference for the assistant persona.
+        text = text.replace("यह बताएँगी", "यह बताइए")
+        text = text.replace("ये बताएँगी", "ये बताइए")
+        text = text.replace("बताएँगी?", "बताइए?")
+        text = text.replace("बताएँगी।", "बताइए।")
+        text = text.replace("बताएँगी", "बताइए")
+        text = text.replace("चाहती हैं?", "चाहेंगे?")
+        text = text.replace("चाहती हैं।", "चाहेंगे।")
+        text = text.replace("चाहती हैं", "चाहेंगे")
         # Devanagari substitutions for Latin-script proper nouns Tripti mispronounces
         for original, replacement in COMPANY_CONFIG.get("tts_substitutions", {}).items():
             text = text.replace(original, replacement)
@@ -337,15 +433,38 @@ class VoicePipeline:
         self._tts.reset()
         self._tts_playing = True
         total_bytes = 0
+        # Buffer to 160-byte (20 ms) boundaries — Twilio's G.711 packet size.
+        # Sending sub-frame chunks causes decoder glitches that sound like crackling.
+        _FRAME = 160
+        buf = bytearray()
         try:
-            async for chunk in self._tts.synthesize(text, voice_id=ELEVENLABS_VOICE_ID):
+            voice_id = ELEVENLABS_VOICE_ID
+            if self._caller_language in {"hindi", "hinglish"} and ELEVENLABS_VOICE_ID_HINDI:
+                voice_id = ELEVENLABS_VOICE_ID_HINDI
+            async for chunk in self._tts.synthesize(text, voice_id=voice_id):
                 if self._interruption.is_interrupted:
                     break
-                total_bytes += len(chunk)
-                await self._telephony.send_audio(chunk)
+                buf.extend(chunk)
+                while len(buf) >= _FRAME:
+                    if self._interruption.is_interrupted:
+                        break
+                    frame = bytes(buf[:_FRAME])
+                    buf = buf[_FRAME:]
+                    total_bytes += len(frame)
+                    await self._telephony.send_audio(frame)
+                if self._interruption.is_interrupted:
+                    break
+            # Flush remainder padded with μ-law silence (0xFF)
+            if buf and not self._interruption.is_interrupted:
+                padded = bytes(buf) + bytes([0xFF] * (_FRAME - len(buf) % _FRAME))
+                total_bytes += len(buf)
+                await self._telephony.send_audio(padded)
         finally:
             self._tts_playing = False
-        return total_bytes / 8000
+        duration = total_bytes / 8000
+        # Twilio may keep a short outbound buffer after frame send completes.
+        self._playback_until = time.monotonic() + duration + 0.25
+        return duration
 
     async def _play_filler(self) -> None:
         """Play a random filler phrase in the caller's language.
@@ -415,10 +534,22 @@ class VoicePipeline:
                     crm_contact_id=crm_id,
                 )
                 if result.get("success"):
-                    await self._speak(
-                        "I'm transferring you to one of our specialists now. "
-                        "They'll have all the context from our conversation."
-                    )
+                    if self._caller_language == "english":
+                        msg = (
+                            "I am transferring you to our hospital team now. "
+                            "They will already have this call context."
+                        )
+                    elif self._caller_language == "hindi":
+                        msg = (
+                            "मैं अभी आपको हमारी अस्पताल टीम से जोड़ रही हूँ। "
+                            "उनके पास इस कॉल की पूरी जानकारी रहेगी।"
+                        )
+                    else:
+                        msg = (
+                            "मैं अभी आपको हमारी hospital team से connect कर रही हूँ। "
+                            "उनके पास इस call की पूरी context रहेगी।"
+                        )
+                    await self._speak(msg)
                     self._running = False
                     return
 
@@ -431,10 +562,22 @@ class VoicePipeline:
             retry = await increment_retry(self.call_id)
             max_retry = COMPANY_CONFIG.get("max_retry_before_escalate", 2)
             if retry >= max_retry:
-                await self._speak(
-                    "I'm having difficulty resolving this. "
-                    "Let me connect you with a human agent who can help."
-                )
+                if self._caller_language == "english":
+                    msg = (
+                        "I am having trouble resolving this from my side. "
+                        "Let me connect you to our human team."
+                    )
+                elif self._caller_language == "hindi":
+                    msg = (
+                        "मेरी तरफ से इसे अभी resolve करने में दिक्कत हो रही है। "
+                        "मैं आपको हमारी human टीम से जोड़ देती हूँ।"
+                    )
+                else:
+                    msg = (
+                        "मेरी तरफ से इसे अभी resolve करने में दिक्कत हो रही है। "
+                        "मैं आपको हमारी human team से connect कर देती हूँ।"
+                    )
+                await self._speak(msg)
                 from tools.escalation import escalate_to_human
                 transcript = await get_transcript(self.call_id)
                 session = await get_session(self.call_id)
@@ -574,11 +717,22 @@ class VoicePipeline:
 
         # Speak 108 advisory immediately — no confirmation step
         self._interruption.reset()
-        duration = await self._speak(
-            "If this is a medical emergency please call one zero eight right now. "
-            "I'm connecting you to our team immediately. "
-            "अगर यह कोई मेडिकल इमरजेंसी है, तो कृपया अभी एक शून्य आठ पर कॉल करें।"
-        )
+        if self._caller_language == "english":
+            emergency_msg = (
+                "If this is a medical emergency, please call one zero eight right now. "
+                "I am connecting you to our team immediately."
+            )
+        elif self._caller_language == "hindi":
+            emergency_msg = (
+                "अगर यह मेडिकल इमरजेंसी है, तो कृपया अभी एक शून्य आठ पर कॉल करें। "
+                "मैं अभी आपको हमारी टीम से तुरंत जोड़ रही हूँ।"
+            )
+        else:
+            emergency_msg = (
+                "अगर यह medical emergency है, तो कृपया अभी one zero eight पर call करें। "
+                "मैं अभी आपको हमारी team से तुरंत connect कर रही हूँ।"
+            )
+        duration = await self._speak(emergency_msg)
         # Wait for Twilio to finish playing the buffered audio before transferring.
         # _speak() returns as soon as the last byte is written to the WS buffer —
         # the transfer must not fire until the caller has actually heard the message.
@@ -605,11 +759,28 @@ class VoicePipeline:
         cfg = COMPANY_CONFIG
         company = cfg.get("company_name", "our hospital")
         agent = cfg.get("agent_name", "Priya")
+        if self._caller_language == "english":
+            return (
+                f"Hello, thank you for calling {company}. "
+                f"I am {agent}. How can I help you today?"
+            )
+        if self._caller_language == "hindi":
+            return (
+                f"नमस्ते, {company} में आपका स्वागत है। "
+                f"मैं {agent} बोल रही हूँ। बताइए, आज आपको किस डॉक्टर से अपॉइंटमेंट चाहिए?"
+            )
         return (
             f"नमस्ते, {company} में आपका स्वागत है। "
-            f"मैं {agent} हूँ। "
-            f"How may I assist you today?"
+            f"मैं {agent} बोल रही हूँ। बताइए, आज आपको किस डॉक्टर से मिलना है?"
         )
+
+    @staticmethod
+    def _detect_language_override(text: str) -> str | None:
+        lower = text.lower()
+        for lang, patterns in _LANGUAGE_SWITCH_PATTERNS.items():
+            if any(p in lower for p in patterns):
+                return lang
+        return None
 
     async def _async_crm_lookup(self) -> None:
         """Non-blocking CRM lookup — resolves in background after call starts."""

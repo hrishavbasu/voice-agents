@@ -3,7 +3,9 @@ TTS service — supports ElevenLabs (Indian voice, primary), Deepgram Aura
 (prototype/free), and Cartesia Sonic (production).
 
 Selected by TTS_PROVIDER env var:
-  "elevenlabs"  — Indian English voice via ElevenLabs (recommended)
+  "sarvam"      — Sarvam Bulbul Indian voice (primary, recommended)
+  "elevenlabs"  — ElevenLabs Indian English voice (fallback)
+  "azure"       — Azure Cognitive Services TTS (free fallback)
   "deepgram"    — Deepgram Aura free tier
   "cartesia"    — Cartesia Sonic production
 
@@ -84,7 +86,7 @@ class TTSService:
                             return
                         yield chunk
                 except Exception as exc2:
-                    logger.warning("ElevenLabs failed (%s) — falling back to Deepgram", exc2)
+                    logger.warning("ElevenLabs failed (%s) — falling back to Deepgram TTS", exc2)
                     async for chunk in self._deepgram(text):
                         if self._cancelled:
                             return

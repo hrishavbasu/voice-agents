@@ -96,7 +96,6 @@ async def sarvam_synthesize(
     text: str,
     cancelled_flag: list,
     language_code: str = "hi-IN",
-    output_format: str = "ulaw_8000",
 ) -> AsyncIterator[bytes]:
     """
     Synthesize speech with Sarvam Bulbul and yield raw μ-law 8kHz chunks.
@@ -105,7 +104,6 @@ async def sarvam_synthesize(
         text: Text to synthesize (Hindi, English, or Hinglish).
         cancelled_flag: Single-element list [False]; set to [True] to stop mid-stream.
         language_code: "hi-IN" for Hindi/Hinglish, "en-IN" for Indian English.
-        output_format: Always "ulaw_8000" for telephony (Twilio μ-law 8kHz).
     """
     api_key = (os.getenv("SARVAM_API_KEY") or SARVAM_API_KEY or "").strip()
     if not api_key:
@@ -134,8 +132,8 @@ async def sarvam_synthesize(
 
         # Some accounts use Bearer auth — retry once if subscription key rejected
         if response.status_code == 403:
-            headers["Authorization"] = f"Bearer {api_key}"
-            response = await client.post(_SARVAM_TTS_URL, headers=headers, json=payload)
+            retry_headers = {**headers, "Authorization": f"Bearer {api_key}"}
+            response = await client.post(_SARVAM_TTS_URL, headers=retry_headers, json=payload)
 
         if response.status_code >= 400:
             logger.error(
@@ -143,10 +141,27 @@ async def sarvam_synthesize(
             )
             response.raise_for_status()
 
-        data = response.json()
-        wav_bytes = _decode_first_wav(data.get("audios", []))
-        pcm16 = _wav_to_raw_pcm16_mono_16k(wav_bytes)
-        audio_bytes = _pcm16_16k_to_ulaw_8k(pcm16)
+        try:
+            data = response.json()
+        except Exception as exc:
+            logger.error("Sarvam TTS: failed to parse JSON response: %s", exc)
+            raise
+
+        audios = data.get("audios")
+        if not audios or not isinstance(audios, list):
+            raise ValueError(
+                f"Sarvam TTS: unexpected response structure — 'audios' field missing or empty. "
+                f"Response keys: {list(data.keys())}"
+            )
+
+        try:
+            wav_bytes = _decode_first_wav(audios)
+            pcm16 = _wav_to_raw_pcm16_mono_16k(wav_bytes)
+            audio_bytes = _pcm16_16k_to_ulaw_8k(pcm16)
+        except Exception as exc:
+            logger.error("Sarvam TTS: audio conversion failed: %s", exc)
+            raise
+
         _cache_set(cache_key, audio_bytes)
 
     chunk_size = 1024

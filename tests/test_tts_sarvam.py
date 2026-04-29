@@ -122,3 +122,78 @@ def test_pcm16_16k_to_ulaw_8k_produces_half_length():
     ulaw = _pcm16_16k_to_ulaw_8k(pcm)
     # μ-law is 1 byte/sample → expect ~800 bytes (allow ±2 for resampling rounding)
     assert abs(len(ulaw) - 800) <= 2
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_skips_api_call():
+    """Second call with same args uses cache — no API call made."""
+    wav_b64 = _make_wav_b64()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"audios": [wav_b64]}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("services.tts_sarvam._get_http_client", AsyncMock(return_value=mock_client)):
+        with patch.dict("os.environ", {"SARVAM_API_KEY": "test-key"}):
+            from services.tts_sarvam import sarvam_synthesize
+            cancelled = [False]
+            # First call — hits API
+            async for _ in sarvam_synthesize("cache test", cancelled, language_code="hi-IN"):
+                pass
+            cancelled = [False]
+            # Second call — should hit cache
+            async for _ in sarvam_synthesize("cache test", cancelled, language_code="hi-IN"):
+                pass
+
+    assert mock_client.post.call_count == 1, "API should only be called once — second call should use cache"
+
+
+@pytest.mark.asyncio
+async def test_bearer_auth_retry_on_403():
+    """On 403, retries with Bearer Authorization header."""
+    wav_b64 = _make_wav_b64()
+    success_response = MagicMock()
+    success_response.status_code = 200
+    success_response.json.return_value = {"audios": [wav_b64]}
+
+    forbidden_response = MagicMock()
+    forbidden_response.status_code = 403
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=[forbidden_response, success_response])
+
+    with patch("services.tts_sarvam._get_http_client", AsyncMock(return_value=mock_client)):
+        with patch.dict("os.environ", {"SARVAM_API_KEY": "test-key"}):
+            from services.tts_sarvam import sarvam_synthesize
+            cancelled = [False]
+            chunks = []
+            async for chunk in sarvam_synthesize("retry test", cancelled, language_code="hi-IN"):
+                chunks.append(chunk)
+
+    assert mock_client.post.call_count == 2, "Should have retried once after 403"
+    # Second call should have Authorization header
+    retry_headers = mock_client.post.call_args_list[1].kwargs.get("headers") or mock_client.post.call_args_list[1].args[1]
+    assert "Authorization" in retry_headers
+    assert "Bearer" in retry_headers["Authorization"]
+    assert chunks, "Should have received audio after successful retry"
+
+
+@pytest.mark.asyncio
+async def test_invalid_response_structure_raises():
+    """ValueError raised when 'audios' key is missing from response."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"error": "unexpected format"}  # no 'audios' key
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("services.tts_sarvam._get_http_client", AsyncMock(return_value=mock_client)):
+        with patch.dict("os.environ", {"SARVAM_API_KEY": "test-key"}):
+            from services.tts_sarvam import sarvam_synthesize
+            cancelled = [False]
+            with pytest.raises(ValueError, match="audios"):
+                async for _ in sarvam_synthesize("bad response", cancelled):
+                    pass

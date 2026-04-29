@@ -31,7 +31,7 @@ KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))
 # TTS options
 # "elevenlabs" (Indian voice, recommended) | "deepgram" (prototype) | "cartesia" (production)
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")
 TTS_VOICE_ID = os.getenv(
     "TTS_VOICE_ID",
     "aura-asteria-en",  # Deepgram Aura fallback (not used when TTS_PROVIDER=elevenlabs)
@@ -55,6 +55,11 @@ ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID = os.getenv("ELEVENLABS_PRONUNCIATION_D
 AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "")
 AZURE_TTS_REGION = os.getenv("AZURE_TTS_REGION", "eastus")
 AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
+
+# Sarvam Bulbul TTS (Indian languages — primary)
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v1")
+SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "meera")
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")

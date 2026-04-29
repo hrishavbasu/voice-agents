@@ -161,6 +161,63 @@ def _quick_browser_reply(user_text: str, caller_language: str) -> str | None:
         if caller_language == "english":
             return f"For general physician consultation, we have {names}. Would you like me to check slots?"
         return f"जनरल फिजिशियन के लिए हमारे पास {names} हैं। क्या मैं उपलब्ध स्लॉट चेक करूँ?"
+
+    if any(k in low for k in ("sunday", "रविवार")) and any(k in low for k in ("open", "closed", "बंद", "खुला")):
+        if caller_language == "english":
+            return "Our OPD is closed on Sunday. I can help you check Monday to Saturday availability."
+        return "हमारी ओपीडी रविवार को बंद रहती है। मैं सोमवार से शनिवार के उपलब्ध स्लॉट चेक कर सकती हूँ।"
+
+    day_aliases = {
+        "monday": "monday", "mon": "monday", "सोमवार": "monday",
+        "tuesday": "tuesday", "tue": "tuesday", "मंगलवार": "tuesday",
+        "wednesday": "wednesday", "wed": "wednesday", "बुधवार": "wednesday",
+        "thursday": "thursday", "thu": "thursday", "गुरुवार": "thursday",
+        "friday": "friday", "fri": "friday", "शुक्रवार": "friday",
+        "saturday": "saturday", "sat": "saturday", "शनिवार": "saturday",
+        "sunday": "sunday", "sun": "sunday", "रविवार": "sunday",
+    }
+    requested_day = next((v for k, v in day_aliases.items() if k in low), None)
+    if requested_day:
+        try:
+            from config.company_config import COMPANY_CONFIG
+            from tools.scheduling import check_doctor_slots
+            import re as _re
+            doctors = COMPANY_CONFIG.get("doctors", [])
+            plain_text = _re.sub(r"[^a-z0-9\s]", " ", low)
+            matched_doctor = next(
+                (d.get("name", "") for d in doctors if d.get("name", "").lower() in low),
+                "",
+            )
+            if not matched_doctor:
+                matched_doctor = next(
+                    (
+                        d.get("name", "")
+                        for d in doctors
+                        if all(
+                            token in plain_text
+                            for token in _re.sub(r"[^a-z0-9\s]", " ", d.get("name", "").lower()).split()
+                            if token not in {"dr", "doctor"}
+                        )
+                    ),
+                    "",
+                )
+            if matched_doctor:
+                slot_info = check_doctor_slots(doctor_name=matched_doctor, preferred_date=requested_day)
+                if slot_info.get("success") and slot_info.get("available_on_requested_date") is False:
+                    next_day = (slot_info.get("next_available_date", "") or "").split(",")[0] or "next available day"
+                    if caller_language == "english":
+                        return (
+                            f"{matched_doctor} is not available on {requested_day.capitalize()}. "
+                            f"They are available on {slot_info.get('available_days', '')}. "
+                            f"Next available is {next_day}. Would you like me to book that?"
+                        )
+                    return (
+                        f"{matched_doctor} {requested_day.capitalize()} को उपलब्ध नहीं हैं। "
+                        f"ये {slot_info.get('available_days', '')} को उपलब्ध हैं। "
+                        f"अगली उपलब्ध तारीख {next_day} है। क्या मैं वही बुक कर दूँ?"
+                    )
+        except Exception:
+            pass
     return None
 
 
@@ -330,7 +387,7 @@ async def _run_llm_with_tools(
     from services.llm import stream_response
 
     if depth > 3:
-        return "I'm having a little trouble right now. Could you please repeat that?", _tool_called
+        return "Could you please repeat that once?", _tool_called
 
     full_messages = [{"role": "system", "content": system}] + messages[-_BROWSER_MAX_CONTEXT_MESSAGES:]
 

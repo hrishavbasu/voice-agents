@@ -147,6 +147,8 @@ def _check_availability_without_tool(text: str, ctx: GuardrailContext, cfg: dict
 def _check_digit_times(text: str, ctx: GuardrailContext, cfg: dict) -> Optional[str]:
     if not cfg.get("block_digit_times", True):
         return None
+    if ctx.tool_was_called:
+        return None
     m = _DIGIT_TIME_RE.search(text)
     if m:
         logger.warning("GUARDRAIL: digit time in response — blocking: %r", m.group())
@@ -156,6 +158,8 @@ def _check_digit_times(text: str, ctx: GuardrailContext, cfg: dict) -> Optional[
 
 def _check_digit_currency(text: str, ctx: GuardrailContext, cfg: dict) -> Optional[str]:
     if not cfg.get("block_digit_currency", True):
+        return None
+    if ctx.tool_was_called:
         return None
     m = _DIGIT_CURRENCY_RE.search(text)
     if m:

@@ -86,6 +86,9 @@ def _neutralize_caller_gender_hindi(text: str) -> str:
         "चाहती हैं?": "चाहेंगे?",
         "चाहती हैं।": "चाहेंगे।",
         "चाहती हैं": "चाहेंगे",
+        "बता सकती हैं?": "बताइए?",
+        "बता सकती हैं।": "बताइए।",
+        "बता सकती हैं": "बताइए",
     }
     out = text
     for src, dst in replacements.items():

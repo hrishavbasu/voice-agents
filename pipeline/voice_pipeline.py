@@ -25,7 +25,6 @@ import re
 import time
 from typing import Optional
 
-from config.base_config import ELEVENLABS_VOICE_ID
 from config.company_config import COMPANY_CONFIG
 from pipeline.interruption import InterruptionController
 from pipeline.session import (
@@ -217,9 +216,11 @@ class VoicePipeline:
             except asyncio.TimeoutError:
                 continue
 
-            # 150ms hold: absorbs mid-thought pauses that slipped past endpointing.
-            # Drains any follow-on transcript fragments into the same turn.
-            await asyncio.sleep(0.15)
+            # Adaptive hold: short utterances (< 3 words) get 400ms to absorb
+            # Hindi filler tokens ("haan", "okay", "ji") that precede the real
+            # request. Normal utterances still get 150ms.
+            _hold_ms = 400 if len(user_text.split()) < 3 else 150
+            await asyncio.sleep(_hold_ms / 1000)
             while not self._transcript_queue.empty():
                 extra = self._transcript_queue.get_nowait()
                 user_text = user_text + " " + extra
@@ -342,7 +343,8 @@ class VoicePipeline:
         _FRAME = 160
         buf = bytearray()
         try:
-            async for chunk in self._tts.synthesize(text, voice_id=ELEVENLABS_VOICE_ID):
+            lang_code = "hi-IN" if self._caller_language in ("hindi", "hinglish") else "en-IN"
+            async for chunk in self._tts.synthesize(text, language_code=lang_code):
                 if self._interruption.is_interrupted:
                     break
                 buf.extend(chunk)

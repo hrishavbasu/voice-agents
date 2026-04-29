@@ -69,20 +69,9 @@ SARVAM_TTS_MODEL = os.getenv("SARVAM_TTS_MODEL", "bulbul:v3")
 SARVAM_TTS_SPEAKER = os.getenv("SARVAM_TTS_SPEAKER", "priya")
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-# Google Gemini — OpenAI-compatible endpoint (primary LLM)
-# Intentionally no default key: must come from environment.
+# Google Gemini — OpenAI-compatible endpoint (only supported provider)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-# Cerebras — fallback LLM
-CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
-CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
-
-# LLM_PROVIDER: "google" (default) | "openrouter" (fallback)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "500"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))

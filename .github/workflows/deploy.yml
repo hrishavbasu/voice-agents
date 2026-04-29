@@ -67,8 +67,7 @@ jobs:
             --set-env-vars "\
           TELEPHONY_PROVIDER=twilio,\
           TTS_PROVIDER=elevenlabs,\
-          LLM_PROVIDER=groq,\
-          LLM_MODEL=llama-3.3-70b-versatile,\
+          LLM_MODEL=models/gemini-2.5-flash,\
           STT_MODEL=nova-3,\
           STT_LANGUAGE=hi,\
           STT_ENDPOINTING_MS=500,\
@@ -81,14 +80,12 @@ jobs:
           TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,\
           TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,\
           DEEPGRAM_API_KEY=DEEPGRAM_API_KEY:latest,\
-          OPENROUTER_API_KEY=OPENROUTER_API_KEY:latest,\
+          GOOGLE_API_KEY=GOOGLE_API_KEY:latest,\
           ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest,\
           ELEVENLABS_VOICE_ID=ELEVENLABS_VOICE_ID:latest,\
           ELEVENLABS_PRONUNCIATION_DICT_ID=ELEVENLABS_PRONUNCIATION_DICT_ID:latest,\
           ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID=ELEVENLABS_PRONUNCIATION_DICT_VERSION_ID:latest,\
           HUBSPOT_ACCESS_TOKEN=HUBSPOT_ACCESS_TOKEN:latest,\
-          GROQ_API_KEY=GROQ_API_KEY:latest,\
-          CEREBRAS_API_KEY=CEREBRAS_API_KEY:latest,\
           PUBLIC_URL=PUBLIC_URL:latest"
 
       # ── 7. Print service URL ─────────────────────────────────────────────────

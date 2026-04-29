@@ -29,7 +29,7 @@ STT_CONFIDENCE_THRESHOLD = float(os.getenv("STT_CONFIDENCE_THRESHOLD", "0.88"))
 KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))  # 5 min
 
 # TTS options
-# "elevenlabs" (Indian voice, recommended) | "deepgram" (prototype) | "cartesia" (production)
+# "sarvam" (Indian languages, primary) | "elevenlabs" (fallback) | "azure" (free fallback) | "deepgram" (prototype)
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")
 TTS_VOICE_ID = os.getenv(

@@ -117,10 +117,15 @@ async def stream_response(
                 sentence = sentence.strip()
                 if not sentence:
                     continue
-                # Fewer than 3 words ending in a Latin period = likely an
-                # abbreviation fragment (e.g. "डॉ.", "एस.वी.") — merge back.
-                # Danda-terminated sentences (।) are always genuine regardless of length.
-                if len(sentence.split()) < 3 and not sentence.endswith(("।", "॥", "!", "?")):
+                # Fewer than 5 words = likely a short lead-in ("Great!", "Sure.",
+                # "Thank you, Risha.", "Certainly.") — merge into next sentence so
+                # TTS synthesises them together and avoids unnatural single-word prosody.
+                # Exception: danda sentences ≥ 3 words are genuine (e.g. "ठीक है, बताइए।")
+                # but ultra-short danda fragments ("ठीक है।" = 2 words) should also merge.
+                # Questions (?) are always genuine standalone sentences.
+                _word_count = len(sentence.split())
+                _is_danda = sentence.endswith(("।", "॥"))
+                if _word_count < 5 and not sentence.endswith("?") and not (_is_danda and _word_count >= 3):
                     parts[-1] = sentence + " " + parts[-1]
                     continue
                 logger.debug("LLM sentence: %s", sentence)

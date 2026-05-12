@@ -15,34 +15,34 @@ Apollo Hospitals Navi Mumbai is a NABH and JCI accredited multi-specialty hospit
 ## Doctors and Specialties
 
 ### Internal Medicine
-- **Dr. S V Kulkarni** — 46 years experience | Fee: ₹1,700 | Available: Mon–Fri
+- **Dr. S V Kulkarni** — 46 years experience | Fee: 1700 rupees | Available: Mon–Fri
 
 ### Gastroenterology
-- **Dr. Aabha Nagral** — 39 years experience | Fee: ₹2,000 | Available: Mon, Wed, Fri
+- **Dr. Aabha Nagral** — 39 years experience | Fee: 2000 rupees | Available: Mon, Wed, Fri
 
 ### Cardiothoracic & Vascular Surgery
-- **Dr. Shantesh D. Kaushik** — 39 years experience | Fee: ₹2,300 | Available: Tue, Thu, Sat
+- **Dr. Shantesh D. Kaushik** — 39 years experience | Fee: 2300 rupees | Available: Tue, Thu, Sat
 
 ### Orthopedic Surgery
-- **Dr. Atul Bhaskar** — 34 years experience | Fee: ₹2,500 | Available: Mon, Tue, Thu, Fri
+- **Dr. Atul Bhaskar** — 34 years experience | Fee: 2500 rupees | Available: Mon, Tue, Thu, Fri
 
 ### Ophthalmology (Eye)
-- **Dr. Atul Seth** — 30 years experience | Fee: ₹2,000 | Available: Mon, Wed, Fri
+- **Dr. Atul Seth** — 30 years experience | Fee: 2000 rupees | Available: Mon, Wed, Fri
 
 ### Neurosurgery
-- **Dr. Naresh Biyani** (MBBS, MCh) — 28 years experience | Fee: ₹3,000 | Available: Tue, Thu
+- **Dr. Naresh Biyani** (MBBS, MCh) — 28 years experience | Fee: 3000 rupees | Available: Tue, Thu
 
 ### Medical Oncology (Cancer)
-- **Dr. Jyoti Bajpai** — 27 years experience | Fee: ₹2,300 | Available: Mon, Wed, Fri
+- **Dr. Jyoti Bajpai** — 27 years experience | Fee: 2300 rupees | Available: Mon, Wed, Fri
 
 ### Cardiology (Heart)
-- **Dr. Anuj Sathe** (MBBS, MD, DM) — 17 years experience | Fee: ₹2,000 | Available: Mon–Fri
+- **Dr. Anuj Sathe** (MBBS, MD, DM) — 17 years experience | Fee: 2000 rupees | Available: Mon–Fri
 
 ### Surgical Gastroenterology
-- **Dr. Nilesh Doctor** (MBBS, MS, DNB) — 32 years experience | Fee: ₹1,500 | Available: Mon, Thu, Sat
+- **Dr. Nilesh Doctor** (MBBS, MS, DNB) — 32 years experience | Fee: 1500 rupees | Available: Mon, Thu, Sat
 
 ### Pediatric Cardiology (Children's Heart)
-- **Dr. Bhushan Chavan** (MBBS, DNB, Fellowship) — 17 years experience | Fee: ₹1,800 | Available: Tue, Fri
+- **Dr. Bhushan Chavan** (MBBS, DNB, Fellowship) — 17 years experience | Fee: 1800 rupees | Available: Tue, Fri
 
 ---
 
@@ -50,16 +50,16 @@ Apollo Hospitals Navi Mumbai is a NABH and JCI accredited multi-specialty hospit
 
 | Specialty | Fee |
 |-----------|-----|
-| Internal Medicine | ₹1,700 |
-| Gastroenterology | ₹2,000 |
-| Cardiothoracic Surgery | ₹2,300 |
-| Orthopedic Surgery | ₹2,500 |
-| Ophthalmology | ₹2,000 |
-| Neurosurgery | ₹3,000 |
-| Medical Oncology | ₹2,300 |
-| Cardiology | ₹2,000 |
-| Surgical Gastroenterology | ₹1,500 |
-| Pediatric Cardiology | ₹1,800 |
+| Internal Medicine | 1700 rupees |
+| Gastroenterology | 2000 rupees |
+| Cardiothoracic Surgery | 2300 rupees |
+| Orthopedic Surgery | 2500 rupees |
+| Ophthalmology | 2000 rupees |
+| Neurosurgery | 3000 rupees |
+| Medical Oncology | 2300 rupees |
+| Cardiology | 2000 rupees |
+| Surgical Gastroenterology | 1500 rupees |
+| Pediatric Cardiology | 1800 rupees |
 
 ---
 

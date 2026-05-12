@@ -111,6 +111,91 @@ def _is_weak_english_signal(text: str) -> bool:
     return low in {"hello", "hi", "hey", "hello priya", "hi priya"}
 
 
+_ACK_TOKENS = frozenset({
+    # English
+    "thank", "thanks", "ok", "okay", "yes", "no", "sure", "bye", "goodbye",
+    "alright", "perfect", "great", "good", "noted", "got", "understood",
+    "you", "so", "much", "very",  # for "thank you", "thank you so much"
+    # Hindi / Hinglish
+    "धन्यवाद", "शुक्रिया", "ठीक", "हाँ", "हां", "नहीं", "बढ़िया", "अच्छा",
+    "सही", "चलेगा", "ठीक है", "बिल्कुल", "समझ", "अलविदा",
+    "थैंक", "थैंक्स",
+    "बहुत", "बहुत अच्छा", "बहुत बढ़िया",  # "bahut achha" goodbyes
+    "acha", "achha", "theek", "haan", "nahi",  # Hinglish spellings
+})
+
+
+def _is_simple_ack(text: str) -> bool:
+    """Return True for short acknowledgement turns that don't need a filler pause.
+
+    Heuristic: ≤ 8 words AND every word (lowercased, punctuation stripped) is
+    either a known ack token or a name/connector word unlikely to need LLM thinking time.
+    """
+    words = (text or "").strip().split()
+    if len(words) > 8:
+        return False
+    clean = {w.strip(".,!?।॥").lower() for w in words}
+    # Allow connectors alongside ack tokens: "priya", "ji", "please", common Hinglish
+    extra = {"priya", "ji", "जी", "please", "kar", "karo", "ho", "hai", "the", "a", "is"}
+    return bool(clean) and clean <= _ACK_TOKENS | extra
+
+
+# Keywords that strongly predict a tool call will be triggered.
+# check_doctor_slots / list_doctors fire when the user mentions a doctor or
+# asks about availability. book_appointment fires when the last missing piece
+# (patient name) is provided — detected via last-agent-message context.
+_TOOL_TRIGGER_KEYWORDS = frozenset({
+    # Doctor / specialist mentions
+    "doctor", "डॉक्टर",
+    # Common specialties (partial matches work because we use 'in')
+    "ortho", "cardio", "neuro", "gastro", "ophthalmol", "oncol", "pediatr",
+    "surgeon", "specialist", "विशेषज्ञ",
+    # Availability / slot queries
+    "available", "availability", "उपलब्ध", "slot", "स्लॉट",
+    "kab", "कब",
+    # Listing
+    "कौन", "which doctor", "all doctor", "सभी doctor",
+    # Explicit booking trigger words
+    "book", "बुक", "schedule",
+})
+
+# Words in the last agent message that indicate it asked for the patient's name.
+# When the last agent turn asked for a name and the user provides one,
+# book_appointment will be called.
+_AGENT_ASKED_NAME = frozenset({
+    "नाम", "name", "naam", "patient name", "full name", "पूरा नाम",
+})
+
+
+def _likely_needs_tool_call(user_text: str, messages: list) -> bool:
+    """Predict whether this user turn will trigger a tool call.
+
+    Returns True → play filler immediately (don't peek).
+    Returns False → give the LLM 1.5 s to respond before deciding on filler.
+
+    Two signals:
+    1. User message contains keywords that directly trigger check_doctor_slots
+       or list_doctors.
+    2. The last assistant message asked for the patient's name — providing a name
+       now will trigger book_appointment (the final booking step).
+    """
+    text_lower = re.sub(r'[.,!?।॥\'\"]+', ' ', (user_text or "").lower())
+
+    # Signal 1: doctor / availability keywords
+    if any(kw in text_lower for kw in _TOOL_TRIGGER_KEYWORDS):
+        return True
+
+    # Signal 2: last assistant message asked for patient name
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            content = re.sub(r'[.,!?।॥\'\"]+', ' ', (msg.get("content") or "").lower())
+            if any(kw in content for kw in _AGENT_ASKED_NAME):
+                return True
+            break  # only inspect the most recent assistant turn
+
+    return False
+
+
 # Language-aware filler phrases — matched to detected caller language so the
 # bot doesn't suddenly switch to English mid Hindi/Hinglish conversation.
 TOOL_FILLERS: dict[str, list[str]] = {
@@ -348,37 +433,126 @@ class VoicePipeline:
                 caller_language=current_lang,
             )
             # Keep last 10 messages only — reduces tokens per request by ~40%
-            full_messages = [{"role": "system", "content": system}] + messages[-VOICE_MAX_CONTEXT_MESSAGES:]
+            # Filter orphaned tool results: a tool message without a preceding assistant
+            # message that contains tool_calls causes Gemini to reject the entire request
+            # with "function_response.name: Name cannot be empty".
+            _raw = messages[-VOICE_MAX_CONTEXT_MESSAGES:]
+            _filtered = []
+            for _msg in _raw:
+                if _msg.get("role") == "tool":
+                    _prev = _filtered[-1] if _filtered else None
+                    if not _prev or _prev.get("role") != "assistant" or not _prev.get("tool_calls"):
+                        logger.warning("Dropping orphaned tool message (name=%s) to prevent Gemini 400", _msg.get("name", ""))
+                        continue
+                _filtered.append(_msg)
+            full_messages = [{"role": "system", "content": system}] + _filtered
 
-            # Stream LLM response
+            # Stream LLM response — fire LLM as a background task and play a
+            # cached filler phrase in parallel so the caller hears audio immediately
+            # while Sarvam TTS synthesises the first real sentence.
             assistant_text_parts = []
             self._interruption.reset()
             self._tts.reset()
             correction_text: str | None = None
 
-            async for item in stream_response(full_messages, tools=self._tool_schemas):
-                if self._interruption.is_interrupted:
-                    logger.info("Barge-in: stopping LLM response playback")
-                    break
+            # Feed LLM items into a queue so we can consume them after filler plays.
+            _llm_out: asyncio.Queue = asyncio.Queue()
 
-                # Mid-generation correction: caller spoke while LLM was streaming.
-                # Cancel TTS, note the correction, break — outer loop will reprocess
-                # with user_text + correction so the agent never acts on stale input.
+            async def _run_llm_to_queue() -> None:
+                try:
+                    async for _item in stream_response(full_messages, tools=self._tool_schemas):
+                        await _llm_out.put(_item)
+                except Exception as _exc:
+                    logger.error("LLM background task error: %s", _exc)
+                    await _llm_out.put(
+                        "I'm having a little trouble right now. Could you repeat that?"
+                    )
+                finally:
+                    await _llm_out.put(None)  # sentinel — always fires even on cancel
+
+            llm_task = asyncio.create_task(_run_llm_to_queue())
+
+            # Three-way filler decision:
+            #
+            # 1. Simple ack ("thank you", "हाँ", "goodbye") → skip filler entirely.
+            #    LLM will respond almost instantly and no thinking time is needed.
+            #
+            # 2. Tool-call predicted → play filler immediately, no peek.
+            #    _likely_needs_tool_call detects: (a) doctor/availability keywords that
+            #    trigger check_doctor_slots / list_doctors, (b) last agent turn asked
+            #    for patient name → providing it now will trigger book_appointment.
+            #    These turns always take ≥2s (LLM text + tool execution + next LLM turn)
+            #    so a filler is genuinely useful.
+            #
+            # 3. Conversational (slot selection, concern confirmation, etc.) → peek 1.5s.
+            #    Gemini's first-token for conversational turns is ~1–1.5s. With a 1.5s
+            #    peek the LLM sentence usually arrives just in time, so the filler is
+            #    skipped and the caller hears the response directly. Filler fires only if
+            #    Gemini is unusually slow on that turn.
+            _peeked_item: str | dict | None = None
+            if _is_simple_ack(user_text):
+                pass  # no filler, LLM will be fast
+            elif _likely_needs_tool_call(user_text, messages):
+                await self._play_filler()  # tool call coming → filler immediately
+            else:
+                try:
+                    _peeked_item = await asyncio.wait_for(_llm_out.get(), timeout=1.5)
+                except asyncio.TimeoutError:
+                    await self._play_filler()
+
+            # Consume LLM output. Process peeked item first if we have one.
+            _inject_item: str | dict | None = _peeked_item
+            while not self._interruption.is_interrupted:
+                # Mid-generation correction: caller spoke while we were playing filler
+                # or TTS. Reprocess with the new input.
                 if not self._transcript_queue.empty():
                     correction_text = self._transcript_queue.get_nowait()
                     while not self._transcript_queue.empty():
                         correction_text += " " + self._transcript_queue.get_nowait()
-                    logger.info("Mid-generation correction: %r — reprocessing", correction_text)
+                    logger.info(
+                        "Mid-generation correction: %r — reprocessing", correction_text
+                    )
                     self._tts.cancel()
+                    llm_task.cancel()
+                    break
+
+                if _inject_item is not None:
+                    item = _inject_item
+                    _inject_item = None
+                else:
+                    try:
+                        item = await asyncio.wait_for(_llm_out.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("LLM queue timeout — aborting turn")
+                        llm_task.cancel()
+                        break
+
+                if item is None:  # sentinel
                     break
 
                 if isinstance(item, str):
-                    # Sentence — speak it and record it
                     assistant_text_parts.append(item)
                     await self._speak(item)
-
                 elif isinstance(item, dict) and item.get("type") == "tool_call":
                     await self._handle_tool_call(item)
+
+            if self._interruption.is_interrupted:
+                logger.info("Barge-in: stopping LLM response playback")
+                # Drain any already-generated tool calls from the queue.
+                # A booking/slot-check tool call queued BEFORE the barge-in must
+                # still execute so context isn't lost (e.g. caller says "slot
+                # चलेगा" mid-sentence but booking tool_call was already queued).
+                try:
+                    while True:
+                        remaining = _llm_out.get_nowait()
+                        if remaining is None:
+                            break
+                        if isinstance(remaining, dict) and remaining.get("type") == "tool_call":
+                            logger.info("Barge-in drain: executing queued tool call %s", remaining.get("name"))
+                            await self._handle_tool_call(remaining)
+                except asyncio.QueueEmpty:
+                    pass
+                llm_task.cancel()
 
             # Record full assistant turn
             if assistant_text_parts:
@@ -484,6 +658,9 @@ class VoicePipeline:
         import json as _json
 
         name = tool_call.get("name", "")
+        if not name:
+            logger.error("Tool call with empty name — skipping to prevent session corruption")
+            return
         args = tool_call.get("arguments", {})
         tool_id = tool_call.get("id", f"call_{name}")
         logger.info("Executing tool: %s(%s)", name, args)
@@ -491,8 +668,6 @@ class VoicePipeline:
         # NOTE: assistant+tool_calls is saved AFTER the tool result is known,
         # inside _speak_tool_result. Saving it here (before the tool runs) causes
         # orphaned tool_calls messages if barge-in interrupts before the result.
-
-        await self._play_filler()
 
         result: dict = {}
 

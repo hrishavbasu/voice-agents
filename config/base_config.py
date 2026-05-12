@@ -31,7 +31,7 @@ STT_CONFIDENCE_THRESHOLD = float(os.getenv("STT_CONFIDENCE_THRESHOLD", "0.88"))
 # Merge window for final transcript fragments before sending to LLM.
 TRANSCRIPT_MERGE_HOLD_MS = int(os.getenv("TRANSCRIPT_MERGE_HOLD_MS", "60"))
 KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))  # 5 min
-VOICE_MAX_CONTEXT_MESSAGES = int(os.getenv("VOICE_MAX_CONTEXT_MESSAGES", "6"))
+VOICE_MAX_CONTEXT_MESSAGES = int(os.getenv("VOICE_MAX_CONTEXT_MESSAGES", "20"))
 
 # TTS options
 # "elevenlabs" (Indian voice, recommended) | "sarvam" (India-language specialist)

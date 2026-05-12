@@ -13,6 +13,7 @@ The on_speech_started callback receives no arguments — triggers barge-in.
 
 import asyncio
 import logging
+import time
 from typing import Callable, Awaitable, Optional
 
 from deepgram import (
@@ -65,6 +66,9 @@ class DeepgramSTT:
         # the LLM on mid-utterance fragments (the root cause of parallel responses)
         self._utterance_parts: list[str] = []
         self._primary_speaker: Optional[int] = None  # locked on first speech_final
+        # Dedup: short utterances sometimes fire speech_final twice on full profile
+        self._last_dispatched: str = ""
+        self._last_dispatched_at: float = 0.0
 
     async def connect(self) -> None:
         """Open the WebSocket connection and register event handlers."""
@@ -80,29 +84,10 @@ class DeepgramSTT:
             LiveTranscriptionEvents.Error, self._handle_error
         )
 
-        # Some Deepgram accounts reject specific realtime option combinations.
-        # Try progressively simpler profiles before failing the call.
+        # minimal-auto-lang and minimal-hi profiles were deprecated on Deepgram
+        # and now return HTTP 400 on every call — removed to avoid 1.5s startup
+        # penalty from two failed connection attempts per call.
         attempts = [
-            # Fastest/most reliable profile first for Twilio real-time calls.
-            {
-                "label": "minimal-auto-lang",
-                "kwargs": {
-                    "model": "nova-2",
-                    "encoding": self._encoding,
-                    "sample_rate": self._sample_rate,
-                    "channels": 1,
-                },
-            },
-            {
-                "label": "minimal-hi",
-                "kwargs": {
-                    "model": "nova-2",
-                    "language": "hi",
-                    "encoding": self._encoding,
-                    "sample_rate": self._sample_rate,
-                    "channels": 1,
-                },
-            },
             {
                 "label": "full",
                 "kwargs": {
@@ -263,6 +248,16 @@ class DeepgramSTT:
                 if len(full_utterance.split()) < STT_MIN_WORDS:
                     logger.debug("STT: discarding short utterance (min_words=%d): %r", STT_MIN_WORDS, full_utterance)
                     return
+
+                # Dedup: Deepgram full+diarize profile sometimes fires speech_final
+                # twice for the same short utterance (once corrected, once raw).
+                # Suppress if identical text was dispatched within the last 3 seconds.
+                now = time.monotonic()
+                if full_utterance == self._last_dispatched and now - self._last_dispatched_at < 3.0:
+                    logger.debug("STT dedup: suppressing duplicate speech_final: %r", full_utterance)
+                    return
+                self._last_dispatched = full_utterance
+                self._last_dispatched_at = now
 
                 logger.info("STT utterance complete: %s", full_utterance)
                 await self._on_transcript(full_utterance, True)

@@ -159,41 +159,18 @@ _TOOL_TRIGGER_KEYWORDS = frozenset({
     "book", "बुक", "schedule",
 })
 
-# Words in the last agent message that indicate it asked for the patient's name.
-# When the last agent turn asked for a name and the user provides one,
-# book_appointment will be called.
-_AGENT_ASKED_NAME = frozenset({
-    "नाम", "name", "naam", "patient name", "full name", "पूरा नाम",
-})
-
 
 def _likely_needs_tool_call(user_text: str, messages: list) -> bool:
     """Predict whether this user turn will trigger a tool call.
 
-    Returns True → play filler immediately (don't peek).
-    Returns False → give the LLM 1.5 s to respond before deciding on filler.
+    Returns True → play formal filler immediately (tool-call latency expected).
+    Returns False → give the LLM 1.5 s to respond; if slow, play a short backchannel.
 
-    Two signals:
-    1. User message contains keywords that directly trigger check_doctor_slots
-       or list_doctors.
-    2. The last assistant message asked for the patient's name — providing a name
-       now will trigger book_appointment (the final booking step).
+    Signal: user message contains keywords that directly trigger check_doctor_slots,
+    list_doctors, or book_appointment.
     """
     text_lower = re.sub(r'[.,!?।॥\'\"]+', ' ', (user_text or "").lower())
-
-    # Signal 1: doctor / availability keywords
-    if any(kw in text_lower for kw in _TOOL_TRIGGER_KEYWORDS):
-        return True
-
-    # Signal 2: last assistant message asked for patient name
-    for msg in reversed(messages):
-        if msg.get("role") == "assistant":
-            content = re.sub(r'[.,!?।॥\'\"]+', ' ', (msg.get("content") or "").lower())
-            if any(kw in content for kw in _AGENT_ASKED_NAME):
-                return True
-            break  # only inspect the most recent assistant turn
-
-    return False
+    return any(kw in text_lower for kw in _TOOL_TRIGGER_KEYWORDS)
 
 
 # Language-aware filler phrases — matched to detected caller language so the
@@ -226,6 +203,14 @@ TOOL_FILLERS: dict[str, list[str]] = {
         "हाँ, मैं अभी देख लेती हूँ।",
     ],
 }
+# Short natural backchannels for conversational turns where the LLM is slow.
+# These sound like active listening, not a system lookup.
+BACKCHANNEL_SOUNDS: dict[str, list[str]] = {
+    "english": ["Hmm.", "Okay.", "I see.", "Got it.", "Sure.", "Alright."],
+    "hindi": ["हाँ।", "जी।", "अच्छा।", "ठीक है।", "हाँ, हाँ।", "समझ गई।"],
+    "hinglish": ["हाँ।", "Okay।", "जी।", "अच्छा।", "Hmm।", "Sure।", "ठीक है।"],
+}
+
 _LANGUAGE_SWITCH_PATTERNS: dict[str, tuple[str, ...]] = {
     "english": (
         "speak in english",
@@ -474,31 +459,29 @@ class VoicePipeline:
 
             # Three-way filler decision:
             #
-            # 1. Simple ack ("thank you", "हाँ", "goodbye") → skip filler entirely.
-            #    LLM will respond almost instantly and no thinking time is needed.
+            # 1. Simple ack ("thank you", "हाँ", "goodbye") → no sound.
+            #    LLM responds almost instantly, silence is fine.
             #
-            # 2. Tool-call predicted → play filler immediately, no peek.
-            #    _likely_needs_tool_call detects: (a) doctor/availability keywords that
-            #    trigger check_doctor_slots / list_doctors, (b) last agent turn asked
-            #    for patient name → providing it now will trigger book_appointment.
-            #    These turns always take ≥2s (LLM text + tool execution + next LLM turn)
-            #    so a filler is genuinely useful.
+            # 2. Tool-call predicted → play formal filler immediately (no peek).
+            #    _likely_needs_tool_call detects doctor/availability/booking keywords.
+            #    These turns always take ≥2s (LLM + tool execution + second LLM turn)
+            #    so a formal "मैं चेक कर रही हूँ।" filler is appropriate.
             #
-            # 3. Conversational (slot selection, concern confirmation, etc.) → peek 1.5s.
-            #    Gemini's first-token for conversational turns is ~1–1.5s. With a 1.5s
-            #    peek the LLM sentence usually arrives just in time, so the filler is
-            #    skipped and the caller hears the response directly. Filler fires only if
-            #    Gemini is unusually slow on that turn.
+            # 3. Conversational (name, concern, date, confirmation) → peek 1.5s.
+            #    If LLM responds within 1.5s → seamless (no sound needed).
+            #    If LLM is slow → play a SHORT natural backchannel ("hmm", "हाँ",
+            #    "okay") that sounds like active listening, NOT a system lookup.
+            #    This covers Gemini cold-start latency on first turns.
             _peeked_item: str | dict | None = None
             if _is_simple_ack(user_text):
-                pass  # no filler, LLM will be fast
+                pass  # no sound, LLM will be fast
             elif _likely_needs_tool_call(user_text, messages):
-                await self._play_filler()  # tool call coming → filler immediately
+                await self._play_filler()  # tool call coming → formal filler immediately
             else:
                 try:
                     _peeked_item = await asyncio.wait_for(_llm_out.get(), timeout=1.5)
                 except asyncio.TimeoutError:
-                    await self._play_filler()
+                    await self._play_backchannel()  # slow LLM → natural listening sound
 
             # Consume LLM output. Process peeked item first if we have one.
             _inject_item: str | dict | None = _peeked_item
@@ -644,6 +627,7 @@ class VoicePipeline:
         """Play a random filler phrase in the caller's language.
 
         Avoids repeating the same phrase twice in a row.
+        Only used for tool-call turns (doctor search, slot check, booking).
         """
         lang = self._caller_language if self._caller_language in TOOL_FILLERS else "hinglish"
         pool = TOOL_FILLERS[lang]
@@ -651,6 +635,20 @@ class VoicePipeline:
         filler = random.choice(candidates or pool)
         self._last_filler = filler
         await self._speak(filler)
+
+    async def _play_backchannel(self) -> None:
+        """Play a short natural backchannel sound for conversational turns.
+
+        Sounds like active listening ("hmm", "okay", "हाँ") rather than a
+        system lookup. Used when the LLM is slower than 1.5s on a non-tool turn.
+        Avoids repeating the same sound twice in a row.
+        """
+        lang = self._caller_language if self._caller_language in BACKCHANNEL_SOUNDS else "hinglish"
+        pool = BACKCHANNEL_SOUNDS[lang]
+        candidates = [s for s in pool if s != getattr(self, "_last_backchannel", None)]
+        sound = random.choice(candidates or pool)
+        self._last_backchannel = sound
+        await self._speak(sound)
 
     # ── Tool execution ────────────────────────────────────────────────────────
 

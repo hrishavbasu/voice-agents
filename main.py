@@ -51,6 +51,28 @@ async def lifespan(app: FastAPI):
         PUBLIC_URL or "(not set — set PUBLIC_URL for webhooks)",
     )
     await ensure_pronunciation_dict()
+
+    # Pre-warm Sarvam TTS cache in background so filler phrases and the
+    # greeting have near-zero latency (served from LRU cache, no API round-trip).
+    if os.getenv("TTS_PROVIDER", "").lower() == "sarvam":
+        from pipeline.voice_pipeline import TOOL_FILLERS, BACKCHANNEL_SOUNDS
+        from services.tts_sarvam import prewarm_sarvam_cache
+        from config.company_config import COMPANY_CONFIG
+        phrases: list[str] = []
+        for lang_phrases in TOOL_FILLERS.values():
+            phrases.extend(lang_phrases)
+        for lang_phrases in BACKCHANNEL_SOUNDS.values():
+            phrases.extend(lang_phrases)
+        # Pre-warm all 3 language variants of the greeting so call connect is instant
+        company = COMPANY_CONFIG.get("company_name", "our hospital")
+        agent = COMPANY_CONFIG.get("agent_name", "Priya")
+        phrases += [
+            f"नमस्ते, {company} में आपका स्वागत है। मैं {agent} बोल रही हूँ। बताइए, आज आपको किस डॉक्टर से मिलना है?",
+            f"नमस्ते, {company} में आपका स्वागत है। मैं {agent} बोल रही हूँ। बताइए, आज आपको किस डॉक्टर से अपॉइंटमेंट चाहिए?",
+            f"Hello, thank you for calling {company}. I am {agent}. How can I help you today?",
+        ]
+        asyncio.create_task(prewarm_sarvam_cache(phrases))
+
     yield
     # Shutdown: close any lingering pipelines
     for pipeline in list(_active_pipelines.values()):

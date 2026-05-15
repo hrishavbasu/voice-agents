@@ -75,7 +75,13 @@ def _detect_language(text: str) -> str:
 
 
 def _quick_voice_reply(user_text: str, caller_language: str) -> str | None:
-    """Fast-path replies for very common intents to reduce perceived latency."""
+    """Fast-path replies for very common intents to reduce perceived latency.
+
+    Only handles pure greeting turns (≤3 words). All booking-related shortcuts
+    (specialty matching, slot checking) were removed — they bypassed the LLM and
+    had no session awareness, causing the agent to repeat "shall I check slots?"
+    even mid-booking and re-ask name/concern that were already collected.
+    """
     txt = (user_text or "").strip()
     low = txt.lower()
     greet_hits = ("hello", "hi", "हेलो", "नमस्ते")
@@ -86,15 +92,6 @@ def _quick_voice_reply(user_text: str, caller_language: str) -> str | None:
             return "Hello, please tell me which doctor or specialty you want to consult."
         return "जी, बताइए। आपको किस डॉक्टर या किस विभाग में अपॉइंटमेंट चाहिए?"
 
-    if any(k in low for k in ("general", "physician", "internal", "जनरल", "फिजिशियन", "general physician")):
-        names = _cached_doctor_names_for_specialty("internal")
-        if names:
-            if caller_language == "english":
-                return f"For general physician consultation, we have {names}. Would you like me to check slots?"
-            return f"जनरल फिजिशियन के लिए हमारे पास {names} हैं। क्या मैं स्लॉट चेक करूँ?"
-        if caller_language == "english":
-            return "Sure, I can help with general physician appointments. Would you like me to check available slots?"
-        return "ज़रूर, मैं जनरल फिजिशियन के लिए अपॉइंटमेंट में मदद करूँगी। क्या मैं उपलब्ध स्लॉट चेक करूँ?"
     return None
 
 
@@ -207,8 +204,8 @@ TOOL_FILLERS: dict[str, list[str]] = {
 # These sound like active listening, not a system lookup.
 BACKCHANNEL_SOUNDS: dict[str, list[str]] = {
     "english": ["Hmm.", "Okay.", "I see.", "Got it.", "Sure.", "Alright."],
-    "hindi": ["हाँ।", "जी।", "अच्छा।", "ठीक है।", "हाँ, हाँ।", "समझ गई।"],
-    "hinglish": ["हाँ।", "Okay।", "जी।", "अच्छा।", "Hmm।", "Sure।", "ठीक है।"],
+    "hindi": ["हाँ।", "जी।", "अच्छा।", "समझ गई।", "बताइए।"],
+    "hinglish": ["हाँ।", "जी।", "अच्छा।", "Okay।", "Sure।"],
 }
 
 _LANGUAGE_SWITCH_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -269,7 +266,11 @@ class VoicePipeline:
         self._crm_contact: Optional[dict] = None
         self._caller_language: str = "hinglish"  # updated on first clear detection
         self._tts_playing = False  # guard: only barge-in when TTS is active
+        self._tts_started_at = 0.0  # monotonic time when current TTS utterance began
         self._playback_until = 0.0  # include carrier-side buffered playback window
+        # Minimum seconds of audio that must play before barge-in is allowed.
+        # Prevents Deepgram from firing on phone echo/sidetone of agent's own voice.
+        self._BARGE_IN_IMMUNITY_S = 1.5
 
         # Queue of final STT transcripts waiting to be processed
         self._transcript_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -337,6 +338,14 @@ class VoicePipeline:
         speaking_or_buffered = self._tts_playing or (time.monotonic() < self._playback_until)
         if not speaking_or_buffered:
             return
+        # Immunity window: ignore Deepgram speech_started events that fire within
+        # the first N seconds of TTS playback — these are typically phone echo/sidetone
+        # of the agent's own voice, not the caller actually speaking.
+        elapsed = time.monotonic() - self._tts_started_at
+        if elapsed < self._BARGE_IN_IMMUNITY_S:
+            logger.debug("Barge-in suppressed (immunity window, %.2fs elapsed)", elapsed)
+            return
+        logger.info("Barge-in: caller speech detected — cancelling TTS (tts_playing=%s, elapsed=%.2fs)", self._tts_playing, elapsed)
         self._tts.cancel()
         await self._interruption.trigger()
         await self._telephony.clear_playback_buffer()
@@ -436,6 +445,7 @@ class VoicePipeline:
             # cached filler phrase in parallel so the caller hears audio immediately
             # while Sarvam TTS synthesises the first real sentence.
             assistant_text_parts = []
+            _had_tool_call = False
             self._interruption.reset()
             self._tts.reset()
             correction_text: str | None = None
@@ -517,7 +527,8 @@ class VoicePipeline:
                     assistant_text_parts.append(item)
                     await self._speak(item)
                 elif isinstance(item, dict) and item.get("type") == "tool_call":
-                    await self._handle_tool_call(item)
+                    _had_tool_call = True
+                    await self._handle_tool_call(item, pre_tool_text=" ".join(assistant_text_parts))
 
             if self._interruption.is_interrupted:
                 logger.info("Barge-in: stopping LLM response playback")
@@ -537,8 +548,12 @@ class VoicePipeline:
                     pass
                 llm_task.cancel()
 
-            # Record full assistant turn
-            if assistant_text_parts:
+            # Record full assistant turn.
+            # Skip if a tool call was executed — the pre-tool text was already
+            # included in the assistant+tool_calls message inside _speak_tool_result,
+            # so saving it again here would create a duplicate (consecutive) assistant
+            # message that corrupts Gemini's alternating-turn format.
+            if assistant_text_parts and not _had_tool_call:
                 full_response = " ".join(assistant_text_parts)
                 await append_message(self.call_id, "assistant", full_response)
 
@@ -589,6 +604,7 @@ class VoicePipeline:
         logger.info("[AGENT] %s", text)
         self._tts.reset()
         self._tts_playing = True
+        self._tts_started_at = time.monotonic()
         total_bytes = 0
         # Buffer to 160-byte (20 ms) boundaries — Twilio's G.711 packet size.
         # Sending sub-frame chunks causes decoder glitches that sound like crackling.
@@ -609,6 +625,7 @@ class VoicePipeline:
                     buf = buf[_FRAME:]
                     total_bytes += len(frame)
                     await self._telephony.send_audio(frame)
+                    await asyncio.sleep(0.018)  # pace to real-time; keeps Twilio buffer ≤ 40ms for instant barge-in
                 if self._interruption.is_interrupted:
                     break
             # Flush remainder padded with μ-law silence (0xFF)
@@ -652,7 +669,7 @@ class VoicePipeline:
 
     # ── Tool execution ────────────────────────────────────────────────────────
 
-    async def _handle_tool_call(self, tool_call: dict) -> None:
+    async def _handle_tool_call(self, tool_call: dict, pre_tool_text: str = "") -> None:
         import json as _json
 
         name = tool_call.get("name", "")
@@ -675,6 +692,7 @@ class VoicePipeline:
                 result = check_doctor_slots(
                     doctor_name=args.get("doctor_name", ""),
                     preferred_date=args.get("preferred_date"),
+                    preferred_time=args.get("preferred_time"),
                 )
 
             elif name == "list_doctors":
@@ -737,18 +755,21 @@ class VoicePipeline:
             if retry >= max_retry:
                 if self._caller_language == "english":
                     msg = (
-                        "I am having trouble resolving this from my side. "
-                        "Let me connect you to our human team."
+                        "I want to make sure you get the best help possible, "
+                        "so let me connect you with one of our team members who can assist you directly. "
+                        "They will have the full context of our conversation."
                     )
                 elif self._caller_language == "hindi":
                     msg = (
-                        "मेरी तरफ से इसे अभी resolve करने में दिक्कत हो रही है। "
-                        "मैं आपको हमारी human टीम से जोड़ देती हूँ।"
+                        "मैं चाहती हूँ कि आपको सबसे अच्छी सहायता मिले, "
+                        "इसलिए मैं आपको हमारी team से connect कर रही हूँ जो सीधे आपकी मदद करेंगे। "
+                        "उनके पास हमारी पूरी बातचीत की जानकारी रहेगी।"
                     )
                 else:
                     msg = (
-                        "मेरी तरफ से इसे अभी resolve करने में दिक्कत हो रही है। "
-                        "मैं आपको हमारी human team से connect कर देती हूँ।"
+                        "मैं चाहती हूँ कि आपको सबसे अच्छी सहायता मिले, "
+                        "इसलिए मैं आपको हमारी team से connect कर रही हूँ जो directly आपकी help करेंगे। "
+                        "उनके पास हमारी पूरी conversation की जानकारी रहेगी।"
                     )
                 await self._speak(msg)
                 from tools.escalation import escalate_to_human
@@ -773,10 +794,11 @@ class VoicePipeline:
 
         # Feed tool result back to LLM using the proper tool-role format so it
         # continues the conversation naturally (no separate summarize call needed).
-        await self._speak_tool_result(name, tool_id, args, result)
+        await self._speak_tool_result(name, tool_id, args, result, pre_tool_text=pre_tool_text)
 
     async def _speak_tool_result(
-        self, tool_name: str, tool_call_id: str, tool_args: dict, result: dict
+        self, tool_name: str, tool_call_id: str, tool_args: dict, result: dict,
+        pre_tool_text: str = "",
     ) -> None:
         """
         Append the tool result in OpenAI's proper format (role: tool) and let
@@ -799,9 +821,11 @@ class VoicePipeline:
         # Build the assistant+tool_calls message explicitly so we can include it
         # in full_messages AND persist it. Fetching messages BEFORE appends means
         # we must manually append both messages to the in-memory list we pass to LLM.
+        # pre_tool_text is whatever the agent already said before the tool call fired —
+        # including it in content prevents the post-tool LLM pass from repeating it.
         assistant_tool_call_msg = {
             "role": "assistant",
-            "content": "",
+            "content": pre_tool_text,
             "tool_calls": [
                 {
                     "id": tool_call_id,
@@ -824,7 +848,7 @@ class VoicePipeline:
         await append_message(
             self.call_id,
             "assistant",
-            "",
+            pre_tool_text,
             extra={
                 "tool_calls": [
                     {
@@ -847,9 +871,23 @@ class VoicePipeline:
 
         # full_messages must include assistant+tool_calls BEFORE tool result —
         # messages was fetched before the appends above, so add them explicitly.
+        # Apply the same orphan-filtering guard as the main loop to prevent Gemini
+        # from receiving a function_response without a preceding functionCall.
+        _raw = messages[-VOICE_MAX_CONTEXT_MESSAGES:]
+        _filtered: list = []
+        for _msg in _raw:
+            if _msg.get("role") == "tool":
+                _prev = _filtered[-1] if _filtered else None
+                if not _prev or _prev.get("role") != "assistant" or not _prev.get("tool_calls"):
+                    logger.warning(
+                        "Dropping orphaned tool message (name=%s) in _speak_tool_result",
+                        _msg.get("name", ""),
+                    )
+                    continue
+            _filtered.append(_msg)
         full_messages = (
             [{"role": "system", "content": system}]
-            + messages[-10:]
+            + _filtered
             + [assistant_tool_call_msg, tool_result_msg]
         )
 

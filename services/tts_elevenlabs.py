@@ -57,8 +57,9 @@ async def elevenlabs_synthesize(
     params = {"output_format": output_format}
     payload = {
         "text": text,
-        # eleven_turbo_v2_5 — ~250 ms TTFB vs ~500 ms for multilingual_v2; supports Hindi+English
-        "model_id": "eleven_turbo_v2_5",
+        # eleven_multilingual_v2 — required for AI-generated voices in Hindi; turbo_v2_5 can
+        # produce near-silent audio when used with generated (non-cloned) voices.
+        "model_id": "eleven_multilingual_v2",
         # Tuned for natural conversation — lower stability = more expressive,
         # style > 0 adds warmth, similarity_boost preserves voice character.
         "voice_settings": {

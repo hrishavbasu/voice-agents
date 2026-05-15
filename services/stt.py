@@ -101,6 +101,7 @@ class DeepgramSTT:
                     "sample_rate": self._sample_rate,
                     "channels": 1,
                     "diarize": True,
+                    "vad_events": True,  # enables SpeechStarted events for barge-in
                 },
             },
             {
@@ -116,6 +117,7 @@ class DeepgramSTT:
                     "sample_rate": self._sample_rate,
                     "channels": 1,
                     "diarize": False,
+                    "vad_events": True,  # enables SpeechStarted events for barge-in
                 },
             },
         ]
@@ -275,7 +277,7 @@ class DeepgramSTT:
         except (AttributeError, IndexError) as exc:
             logger.warning("STT transcript parse error: %s", exc)
 
-    async def _handle_speech_started(self, _client, _result, **_kwargs) -> None:
+    async def _handle_speech_started(self, _client, **_kwargs) -> None:
         logger.debug("STT: SpeechStarted — barge-in trigger")
         self._utterance_parts = []  # discard any partial fragments from previous turn
         if self._on_speech_started:

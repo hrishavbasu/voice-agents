@@ -154,3 +154,24 @@ async def sarvam_synthesize(
         if cancelled_flag[0]:
             return
         yield audio_bytes[i : i + chunk_size]
+
+
+async def prewarm_sarvam_cache(
+    phrases: list[str],
+    output_format: str = "ulaw_8000",
+) -> None:
+    """Pre-synthesize phrases into the LRU cache at startup.
+
+    Called once during app lifespan so filler phrases are served instantly
+    (from cache, no network round-trip) for every subsequent call.
+    """
+    logger.info("Sarvam TTS pre-warm: %d phrases", len(phrases))
+    ok = 0
+    for text in phrases:
+        try:
+            async for _ in sarvam_synthesize(text, [False], output_format=output_format):
+                pass
+            ok += 1
+        except Exception as exc:
+            logger.debug("Sarvam pre-warm skip %r: %s", text[:30], exc)
+    logger.info("Sarvam TTS pre-warm done: %d/%d cached", ok, len(phrases))

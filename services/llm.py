@@ -113,8 +113,16 @@ async def stream_response(
 
             # Yield complete sentences eagerly
             parts = _SENTENCE_RE.split(buffer)
-            for sentence in parts[:-1]:
-                sentence = sentence.strip()
+            # Index-based loop so short fragments merge into the NEXT element,
+            # not the last one. The old `for sentence in parts[:-1]` + `parts[-1] =`
+            # pattern was wrong: when multiple splits land in one streaming batch
+            # (e.g. "ठीक है।" + "मैं डॉक्टर एस.वी." + "कुलकर्णी के साथ..." + "क्या…?")
+            # the short fragment "मैं डॉक्टर एस.वी." was being prepended to the
+            # very last element ("क्या…?") instead of the immediately following one.
+            i = 0
+            while i < len(parts) - 1:
+                sentence = parts[i].strip()
+                i += 1
                 if not sentence:
                     continue
                 # Fewer than 5 words = likely a short lead-in ("Great!", "Sure.",
@@ -126,7 +134,7 @@ async def stream_response(
                 _word_count = len(sentence.split())
                 _is_danda = sentence.endswith(("।", "॥"))
                 if _word_count < 5 and not sentence.endswith("?") and not (_is_danda and _word_count >= 3):
-                    parts[-1] = sentence + " " + parts[-1]
+                    parts[i] = sentence + " " + parts[i]  # merge into NEXT element
                     continue
                 logger.debug("LLM sentence: %s", sentence)
                 yield sentence

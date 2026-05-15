@@ -16,17 +16,26 @@ TOOL_REGISTRY: dict[str, dict] = {
         "function": {
             "name": "check_doctor_slots",
             "description": (
-                "Check available appointment slots for a specific doctor on a given date. "
-                "ALWAYS call this before book_appointment to show the caller what times are open. "
+                "Check available appointment slots for a doctor or specialty on a given date. "
+                "Pass either a specific doctor name (e.g. 'Dr. Atul Bhaskar') OR a specialty "
+                "(e.g. 'General Physician', 'Gastroenterology', 'Cardiology') as doctor_name — "
+                "the tool will automatically find the best available doctor for that specialty. "
+                "ALWAYS call this before book_appointment. "
+                "If preferred_time is outside working hours, the tool returns the clinic's "
+                "working hours so you can tell the caller. "
                 "If the doctor is unavailable on that date, returns their next available date "
-                "and slots, plus any alternative doctors of the same specialty available on the requested date."
+                "and slots, plus any alternative doctors of the same specialty."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "doctor_name": {
                         "type": "string",
-                        "description": "Name of the doctor to check (e.g. 'Dr. Atul Bhaskar').",
+                        "description": (
+                            "Exact doctor name (e.g. 'Dr. Atul Bhaskar') OR a specialty keyword "
+                            "(e.g. 'General Physician', 'Gastroenterology', 'Cardiology', 'Orthopedic'). "
+                            "When the caller has no preference, pass the specialty."
+                        ),
                     },
                     "preferred_date": {
                         "type": "string",
@@ -34,6 +43,14 @@ TOOL_REGISTRY: dict[str, dict] = {
                             "Date to check availability for "
                             "(e.g. 'tomorrow', 'Monday', '20 April', 'कल', 'सोमवार'). "
                             "Leave blank to check next available day."
+                        ),
+                    },
+                    "preferred_time": {
+                        "type": "string",
+                        "description": (
+                            "Caller's preferred time (e.g. '10 AM', '3 PM', 'morning', 'evening', "
+                            "'सुबह दस बजे'). Used to pick the closest available slot and to detect "
+                            "if the time is outside working hours."
                         ),
                     },
                 },

@@ -372,40 +372,56 @@ def _pick_best_slot(
 def check_doctor_slots(
     doctor_name: str,
     preferred_date: Optional[str] = None,
+    preferred_time: Optional[str] = None,
 ) -> dict:
     """
-    Return available time slots for a doctor on a given date (or next available day).
+    Return available time slots for a doctor (or specialty) on a given date.
     Use this BEFORE calling book_appointment to show the caller what times are open.
 
-    Returns:
-        {
-            "success": True,
-            "doctor": "Dr. Atul Bhaskar",
-            "date": "Monday, 20 April",
-            "slots": ["9:00 AM", "9:30 AM", ..., "4:00 PM", "4:30 PM"],
-            "slot_count": N,
-        }
-    or if doctor not available on that date:
-        {
-            "success": True,
-            "available_on_requested_date": False,
-            "doctor": "...",
-            "requested_date": "Saturday, 18 April",
-            "next_available_date": "Monday, 20 April",
-            "slots_on_next_date": ["9:00 AM", ...],
-            "available_days": "Monday, Tuesday, Thursday, Friday",
-        }
+    doctor_name may be an exact doctor name OR a specialty keyword (e.g. "General Physician",
+    "Gastroenterology") — the tool will find the best available doctor automatically.
+
+    If preferred_time is outside working hours, returns the clinic's working hours instead.
     """
     tz = _tz()
     today = datetime.now(tz).date()
 
-    doctor = _find_doctor(doctor_name, None)
-    if not doctor:
-        return {"success": False, "reason": f"No doctor found matching '{doctor_name}'."}
-
     target_date = _parse_preferred_date(preferred_date) if preferred_date else today + timedelta(days=1)
     if target_date is None:
         target_date = today + timedelta(days=1)
+
+    # Out-of-hours check: tell the caller working hours instead of silently finding no slots
+    if preferred_time:
+        ooh = _check_out_of_hours(preferred_time, target_date)
+        if ooh:
+            # Augment with available slots today so the agent can offer alternatives in one response
+            if not ooh.get("closed_on_requested_day"):
+                _doc = _find_doctor(doctor_name, None)
+                if not _doc:
+                    _result = _find_best_doctor_for_specialty(doctor_name, target_date, None)
+                    if _result:
+                        _doc, _ = _result
+                if _doc:
+                    _day = target_date.strftime("%A").lower()
+                    if _day in set(_doc.get("available_days", [])):
+                        _slots = _slots_for_date(_doc, target_date)
+                        if _slots:
+                            ooh["suggested_doctor"] = _doc["name"]
+                            ooh["suggested_specialty"] = _doc["specialty"]
+                            ooh["available_slots_today"] = _sample_slots_for_voice(_slots)
+                            ooh["available_slots_today_objects"] = [_slot_payload(s) for s in _slots[:6]]
+                            ooh["fee_inr"] = _doc.get("fee_inr")
+                            ooh["fee_spoken_hi"] = _fee_spoken_hi(_doc.get("fee_inr"))
+            return ooh
+
+    # Resolve doctor — exact name first, then specialty fallback
+    doctor = _find_doctor(doctor_name, None)
+    if not doctor:
+        result = _find_best_doctor_for_specialty(doctor_name, target_date, preferred_time)
+        if result:
+            doctor, _ = result
+        else:
+            return {"success": False, "reason": f"No doctor or specialty found matching '{doctor_name}'."}
 
     available_days = set(doctor.get("available_days", []))
     available_days_display = ", ".join(d.capitalize() for d in doctor.get("available_days", []))
@@ -509,6 +525,116 @@ def _slot_payload(slot: datetime) -> dict:
         "spoken_hi": spoken_hi,
         "spoken_hinglish": spoken_hi,
     }
+
+
+def _check_out_of_hours(preferred_time: str, target_date: date) -> Optional[dict]:
+    """
+    Returns a response dict if preferred_time is outside business hours on target_date,
+    otherwise returns None (meaning the time is fine).
+    """
+    biz_hours = COMPANY_CONFIG.get("business_hours", {})
+    day_name = target_date.strftime("%A").lower()
+    hours = biz_hours.get(day_name)
+
+    if hours is None:
+        # Hospital closed that day entirely (e.g. Sunday)
+        day_display = target_date.strftime("%A, %d %B")
+        # Find next open day
+        next_open = target_date + timedelta(days=1)
+        for _ in range(7):
+            if biz_hours.get(next_open.strftime("%A").lower()):
+                break
+            next_open += timedelta(days=1)
+        next_hours = biz_hours.get(next_open.strftime("%A").lower(), {})
+        open_h, open_m = map(int, next_hours["open"].split(":"))
+        close_h, close_m = map(int, next_hours["close"].split(":"))
+        _ref = datetime(2000, 1, 1)
+        open_spoken = _time_to_spoken(_ref.replace(hour=open_h, minute=open_m))
+        close_spoken = _time_to_spoken(_ref.replace(hour=close_h, minute=close_m))
+        return {
+            "success": True,   # tool succeeded — it correctly identified closed day
+            "out_of_hours": True,
+            "closed_on_requested_day": True,
+            "reason": (
+                f"The hospital is closed on {day_display}. "
+                f"We reopen on {next_open.strftime('%A, %d %B')} "
+                f"from {open_spoken} to {close_spoken}."
+            ),
+            "next_open_day": next_open.strftime("%A, %d %B"),
+            "next_open_hours": f"{open_spoken} to {close_spoken}",
+        }
+
+    pref_hour = _parse_preferred_hour(preferred_time)
+    if pref_hour is None:
+        return None
+
+    open_h, open_m = map(int, hours["open"].split(":"))
+    close_h, close_m = map(int, hours["close"].split(":"))
+    open_float = open_h + open_m / 60.0
+    close_float = close_h + close_m / 60.0
+
+    if pref_hour < open_float or pref_hour >= close_float:
+        _ref = datetime(2000, 1, 1)
+        open_spoken = _time_to_spoken(_ref.replace(hour=open_h, minute=open_m))
+        close_spoken = _time_to_spoken(_ref.replace(hour=close_h, minute=close_m))
+        day_display = target_date.strftime("%A")
+        return {
+            "success": True,   # tool succeeded — it correctly identified out-of-hours time
+            "out_of_hours": True,
+            "reason": (
+                f"The requested time '{preferred_time}' is outside working hours on {day_display}. "
+                f"We are open from {open_spoken} to {close_spoken} on {day_display}."
+            ),
+            "working_hours": f"{open_spoken} to {close_spoken}",
+            "working_hours_spoken_en": f"{open_spoken} to {close_spoken}",
+        }
+
+    return None
+
+
+def _find_best_doctor_for_specialty(
+    keyword: str,
+    target_date: date,
+    preferred_time: Optional[str] = None,
+) -> Optional[tuple]:
+    """
+    Find the best available doctor for a specialty keyword on target_date.
+    If preferred_time is given, picks the doctor whose earliest available slot
+    is closest to that time. Returns (doctor_dict, slots_list) or None.
+    """
+    kw = keyword.lower()
+    for word, mapped in _SPECIALTY_ALIASES.items():
+        if word in kw:
+            kw = mapped
+            break
+
+    matching = [
+        d for d in COMPANY_CONFIG.get("doctors", [])
+        if kw in d.get("specialty", "").lower()
+    ]
+    if not matching:
+        return None
+
+    best_doctor: Optional[dict] = None
+    best_slots: list = []
+    best_distance = float("inf")
+
+    for d in matching:
+        slots = _slots_for_date(d, target_date)
+        if not slots:
+            continue
+        if preferred_time:
+            closest = _pick_best_slot(slots, preferred_time)
+            pref_h = _parse_preferred_hour(preferred_time) or 0.0
+            dist = abs(closest.hour + closest.minute / 60.0 - pref_h)
+        else:
+            dist = 0.0
+        if dist < best_distance:
+            best_distance = dist
+            best_doctor = d
+            best_slots = slots
+
+    return (best_doctor, best_slots) if best_doctor else None
 
 
 def _find_alternative_doctors(specialty: str, preferred_date: Optional[str]) -> list[dict]:

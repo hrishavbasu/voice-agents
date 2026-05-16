@@ -66,6 +66,34 @@ async def health():
     return {"status": "ok", "active_calls": len(_active_pipelines)}
 
 
+# ── Config API ────────────────────────────────────────────────────────────────
+
+@app.get("/config")
+async def get_config():
+    """Return current user settings as JSON."""
+    from config.user_settings import load_user_settings
+    return JSONResponse(load_user_settings())
+
+
+@app.post("/config")
+async def post_config(request: Request):
+    """Save user settings to config/user_settings.json."""
+    from config.user_settings import save_user_settings
+    data = await request.json()
+    save_user_settings(data)
+    return JSONResponse({"status": "saved"})
+
+
+@app.get("/config/ui", response_class=HTMLResponse)
+async def config_ui():
+    """Serve the admin config page."""
+    from pathlib import Path
+    html_path = Path("static/config.html")
+    if not html_path.exists():
+        return HTMLResponse("<html><body><h1>Config UI not found</h1><p>static/config.html is missing.</p></body></html>", status_code=200)
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+
+
 # ── Transfer TwiML endpoint ───────────────────────────────────────────────────
 
 @app.post("/transfer-twiml")

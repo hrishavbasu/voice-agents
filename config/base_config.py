@@ -76,7 +76,7 @@ SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "pavithra")   # was: meera
 STT_PROVIDER = _get("stt_provider", "sarvam")  # sarvam | deepgram
 
 # Sarvam STT WebSocket — verify current WSS URL at https://docs.sarvam.ai
-SARVAM_STT_URL = os.getenv("SARVAM_STT_URL", "wss://api.sarvam.ai/speech-to-text-translate/subscribe")
+SARVAM_STT_URL = _get("sarvam_stt_url", os.getenv("SARVAM_STT_URL", "wss://api.sarvam.ai/speech-to-text-translate/subscribe"))
 SARVAM_STT_INTERRUPT_MIN_FRAMES = int(_get("stt_interrupt_min_frames", "3"))
 SARVAM_STT_MIN_SPEECH_FRAMES    = int(_get("stt_min_speech_frames", "5"))
 SARVAM_STT_VOLUME_THRESHOLD     = int(_get("stt_volume_threshold", "-40"))
@@ -114,7 +114,7 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 
-# LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
+# LLM_PROVIDER: "gemini" (default) | "groq" | "openrouter" | "cerebras"
 LLM_PROVIDER = _get("llm_provider", os.getenv("LLM_PROVIDER", "gemini"))
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "200"))

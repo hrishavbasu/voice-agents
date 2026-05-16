@@ -65,7 +65,7 @@ class TTSService:
         self._cancelled = False
         self._cancel_flag = [False]
 
-    async def synthesize(self, text: str, language_code: str = "hi-IN") -> AsyncIterator[bytes]:
+    async def synthesize(self, text: str, language_code: str = "hi-IN", pitch_override=None) -> AsyncIterator[bytes]:
         """Stream audio chunks for *text*.  Stops early if cancel() was called.
 
         ElevenLabs / Azure failures automatically fall back to Deepgram
@@ -74,7 +74,7 @@ class TTSService:
         self.reset()
         if self._provider == "sarvam":
             try:
-                async for chunk in self._sarvam(text, language_code):
+                async for chunk in self._sarvam(text, language_code, pitch_override=pitch_override):
                     if self._cancelled:
                         return
                     yield chunk
@@ -142,9 +142,9 @@ class TTSService:
 
     # ── Sarvam Bulbul (Indian languages — primary) ────────────────────────────
 
-    async def _sarvam(self, text: str, language_code: str = "hi-IN") -> AsyncIterator[bytes]:
+    async def _sarvam(self, text: str, language_code: str = "hi-IN", pitch_override=None) -> AsyncIterator[bytes]:
         from services.tts_sarvam import sarvam_synthesize
-        async for chunk in sarvam_synthesize(text, self._cancel_flag, language_code=language_code):
+        async for chunk in sarvam_synthesize(text, self._cancel_flag, language_code=language_code, pitch_override=pitch_override):
             yield chunk
 
     # ── Deepgram Aura (REST streaming, free tier) ─────────────────────────────

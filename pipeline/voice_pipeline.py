@@ -25,6 +25,12 @@ import re
 import time
 from typing import Optional
 
+from config.base_config import (
+    SILENCE_TIMEOUT_SECS,
+    SILENCE_HANGUP_SECS,
+    ADAPTIVE_HOLD_SHORT_MS,
+    ADAPTIVE_HOLD_NORMAL_MS,
+)
 from config.company_config import COMPANY_CONFIG
 from pipeline.interruption import InterruptionController
 from pipeline.session import (
@@ -113,6 +119,28 @@ _EMERGENCY_KEYWORDS = frozenset({
     "ambulance",
 })
 
+_DISCOURSE_RE = re.compile(
+    r'\b(हाँ|ठीक है|actually|so|well|okay|ok|sure|हाँ जी|अच्छा)(\s+)(?=[^\s,।])',
+    re.IGNORECASE,
+)
+
+
+def _add_prosody_markers(text: str) -> str:
+    """Add natural pause cues before sending text to TTS."""
+    text = text.replace("—", ", ")
+    text = text.replace("...", ",")
+    text = _DISCOURSE_RE.sub(lambda m: m.group(1) + "," + m.group(2), text)
+    return text
+
+
+def _strip_markdown(text: str) -> str:
+    """Remove Gemini markdown artefacts that TTS reads literally."""
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'^\s*[-•]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s+:$', '', text)
+    return text.strip()
+
 
 class VoicePipeline:
     """Orchestrates a single inbound call end-to-end."""
@@ -141,6 +169,7 @@ class VoicePipeline:
         # Queue of final STT transcripts waiting to be processed
         self._transcript_queue: asyncio.Queue[str] = asyncio.Queue()
         self._running = False
+        self._last_activity_at: float = 0.0
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -174,6 +203,8 @@ class VoicePipeline:
 
         # Start the LLM processing loop
         asyncio.create_task(self._llm_loop())
+        self._last_activity_at = time.monotonic()
+        asyncio.create_task(self._silence_watch_loop())
 
     async def shutdown(self) -> None:
         """Cleanly close STT connection and end session."""
@@ -193,6 +224,7 @@ class VoicePipeline:
     # ── STT callbacks ─────────────────────────────────────────────────────────
 
     async def _on_transcript(self, text: str, is_final: bool) -> None:
+        self._last_activity_at = time.monotonic()
         if is_final and text.strip():
             logger.info("[CALLER] %s", text)
             await self._transcript_queue.put(text)
@@ -241,7 +273,7 @@ class VoicePipeline:
             # Adaptive hold: short utterances (< 3 words) get 400ms to absorb
             # Hindi filler tokens ("haan", "okay", "ji") that precede the real
             # request. Normal utterances still get 150ms.
-            _hold_ms = 400 if len(user_text.split()) < 3 else 150
+            _hold_ms = ADAPTIVE_HOLD_SHORT_MS if len(user_text.split()) < 3 else ADAPTIVE_HOLD_NORMAL_MS
             await asyncio.sleep(_hold_ms / 1000)
             while not self._transcript_queue.empty():
                 extra = self._transcript_queue.get_nowait()
@@ -336,23 +368,23 @@ class VoicePipeline:
     @staticmethod
     def _normalize_for_tts(text: str) -> str:
         """Pre-process text so TTS engines don't read symbols or digits unnaturally."""
-        import re as _re
-
         # ₹1,700 → "rupees 1700" (comma stripped so TTS reads as integer)
         # Keep as English fallback; LLM should ideally produce word-form already.
-        text = _re.sub(r"₹\s*([\d,]+)", lambda m: "rupees " + m.group(1).replace(",", ""), text)
+        text = re.sub(r"₹\s*([\d,]+)", lambda m: "rupees " + m.group(1).replace(",", ""), text)
         # Bare ₹ without number
         text = text.replace("₹", "rupees")
         # Strip thousand-separator commas from standalone numbers so "1,700" → "1700"
-        text = _re.sub(r"\b(\d{1,3}),(\d{3})\b", r"\1\2", text)
+        text = re.sub(r"\b(\d{1,3}),(\d{3})\b", r"\1\2", text)
         # Expand Devanagari abbreviations that TTS reads unnaturally
         text = text.replace("डॉ.", "डॉक्टर")
         # Devanagari substitutions for Latin-script proper nouns Tripti mispronounces
         for original, replacement in COMPANY_CONFIG.get("tts_substitutions", {}).items():
             text = text.replace(original, replacement)
+        text = _strip_markdown(text)
+        text = _add_prosody_markers(text)
         return text
 
-    async def _speak(self, text: str) -> float:
+    async def _speak(self, text: str, pitch_override: float = None) -> float:
         """Synthesise text and stream audio to the carrier.
 
         Returns approximate playback duration in seconds (bytes / 8000 for μ-law 8kHz).
@@ -370,7 +402,8 @@ class VoicePipeline:
         buf = bytearray()
         try:
             lang_code = "hi-IN" if self._caller_language in ("hindi", "hinglish") else "en-IN"
-            async for chunk in self._tts.synthesize(text, language_code=lang_code):
+            _pitch_bump = pitch_override if pitch_override is not None else (0.05 if text.rstrip().endswith("?") else 0.0)
+            async for chunk in self._tts.synthesize(text, language_code=lang_code, pitch_override=_pitch_bump if _pitch_bump else None):
                 if self._interruption.is_interrupted:
                     break
                 buf.extend(chunk)
@@ -390,6 +423,7 @@ class VoicePipeline:
                 await self._telephony.send_audio(padded)
         finally:
             self._tts_playing = False
+            self._last_activity_at = time.monotonic()
         duration = total_bytes / 8000
         self._playback_until = time.monotonic() + duration + 0.25
         return duration
@@ -667,6 +701,49 @@ class VoicePipeline:
         await asyncio.sleep(duration + 0.2)
         await self._telephony.hangup()
         self._running = False
+
+    async def _silence_watch_loop(self) -> None:
+        """Prompt 'are you still there?' after inactivity, then hang up."""
+        while self._running:
+            await asyncio.sleep(1.0)
+            if self._tts_playing or self._agent_in_turn or not self._running:
+                continue
+            idle = time.monotonic() - self._last_activity_at
+            if idle < SILENCE_TIMEOUT_SECS:
+                continue
+
+            logger.info("Silence timeout after %.0fs — prompting caller", idle)
+            self._last_activity_at = time.monotonic()
+            lang = self._caller_language
+            if lang == "hindi":
+                prompt = "क्या आप वहाँ हैं?"
+            elif lang == "english":
+                prompt = "Are you still there?"
+            else:
+                prompt = "क्या आप वहाँ हैं?"
+            self._interruption.reset()
+            await self._speak(prompt)
+
+            # Wait for hangup window
+            await asyncio.sleep(SILENCE_HANGUP_SECS)
+            if not self._running:
+                return
+            idle2 = time.monotonic() - self._last_activity_at
+            if idle2 < SILENCE_HANGUP_SECS:
+                continue  # caller responded — back to normal watch
+
+            logger.info("Caller still silent — hanging up")
+            if lang == "hindi":
+                bye = "ठीक है, आपसे बात करके अच्छा लगा। अलविदा।"
+            elif lang == "english":
+                bye = "Alright, have a good day. Goodbye."
+            else:
+                bye = "ठीक है, have a good day. Goodbye."
+            self._interruption.reset()
+            duration = await self._speak(bye)
+            await asyncio.sleep(duration + 0.3)
+            await self._telephony.hangup()
+            self._running = False
 
     def _build_greeting(self) -> str:
         cfg = COMPANY_CONFIG

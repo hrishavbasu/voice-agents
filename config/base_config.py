@@ -70,7 +70,7 @@ AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
 # Sarvam Bulbul TTS (Indian languages — primary)
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_TTS_MODEL   = _get("sarvam_tts_model", "bulbul:v3")
-SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "pavithra")   # was: meera
+SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "priya")
 
 # ── STT provider ──────────────────────────────────────────────────────────────
 STT_PROVIDER = _get("stt_provider", "sarvam")  # sarvam | deepgram

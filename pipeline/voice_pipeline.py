@@ -120,7 +120,7 @@ _EMERGENCY_KEYWORDS = frozenset({
 })
 
 _DISCOURSE_RE = re.compile(
-    r'\b(हाँ|ठीक है|actually|so|well|okay|ok|sure|हाँ जी|अच्छा)(\s+)(?=[^\s,।])',
+    r'\b(हाँ|ठीक है|actually|हाँ जी|अच्छा)(\s+)(?=[^\s,।])',
     re.IGNORECASE,
 )
 
@@ -402,8 +402,8 @@ class VoicePipeline:
         buf = bytearray()
         try:
             lang_code = "hi-IN" if self._caller_language in ("hindi", "hinglish") else "en-IN"
-            _pitch_bump = pitch_override if pitch_override is not None else (0.05 if text.rstrip().endswith("?") else 0.0)
-            async for chunk in self._tts.synthesize(text, language_code=lang_code, pitch_override=_pitch_bump if _pitch_bump else None):
+            _pitch_bump = pitch_override if pitch_override is not None else (0.05 if text.rstrip().endswith("?") else None)
+            async for chunk in self._tts.synthesize(text, language_code=lang_code, pitch_override=_pitch_bump):
                 if self._interruption.is_interrupted:
                     break
                 buf.extend(chunk)

@@ -86,6 +86,19 @@ class TelephonySession:
         silence = bytes([0xFF] * int(duration_ms * 8))  # 8 bytes/ms at 8kHz
         await self.send_audio(silence)
 
+    async def clear_playback_buffer(self) -> None:
+        """Best-effort carrier buffer clear for immediate barge-in."""
+        if not self._active:
+            return
+        try:
+            if self._provider == "twilio" and self._stream_sid:
+                await self._ws.send_text(json.dumps({
+                    "event": "clear",
+                    "streamSid": self._stream_sid,
+                }))
+        except Exception as exc:
+            logger.debug("clear_playback_buffer ignored: %s", exc)
+
     async def transfer(self, destination: str) -> None:
         """
         Transfer the call to a PSTN number or SIP URI.

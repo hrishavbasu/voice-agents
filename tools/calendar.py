@@ -89,10 +89,16 @@ def create_appointment_event(
     """
     calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
     service = _get_service()
+    env_name = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").lower()
+    allow_dry_run = os.getenv("CALENDAR_ALLOW_DRY_RUN", "true").lower() == "true"
 
     slot_human = start_dt.strftime("%A, %d %B at %-I:%M %p")
 
     if service is None:
+        if env_name in {"prod", "production"} and not allow_dry_run:
+            reason = "Google Calendar is not configured in production; dry-run is disabled"
+            logger.error(reason)
+            return {"success": False, "reason": reason}
         # Dry-run — log and return success so the voice flow continues
         logger.info(
             "[DRY RUN] Appointment booked: %s | %s (%s) | %s | Concern: %s | Phone: %s",

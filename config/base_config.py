@@ -13,10 +13,10 @@ _US = _load_user_settings()
 
 
 def _get(key: str, default):
-    """Return user_settings value if present, else env var, else default."""
+    """Return user_settings value if present, else env var (uppercase key), else default."""
     if key in _US:
         return _US[key]
-    return os.getenv(key, default)
+    return os.getenv(key.upper(), default)
 
 
 # ── Telephony ──────────────────────────────────────────────────────────────────
@@ -76,11 +76,11 @@ SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "pavithra")   # was: meera
 STT_PROVIDER = _get("stt_provider", "sarvam")  # sarvam | deepgram
 
 # Sarvam STT WebSocket — verify current WSS URL at https://docs.sarvam.ai
-SARVAM_STT_URL = _get("sarvam_stt_url", os.getenv("SARVAM_STT_URL", "wss://api.sarvam.ai/speech-to-text-translate/subscribe"))
+SARVAM_STT_URL = _get("sarvam_stt_url", "wss://api.sarvam.ai/speech-to-text-translate/subscribe")
 SARVAM_STT_INTERRUPT_MIN_FRAMES = int(_get("stt_interrupt_min_frames", "3"))
 SARVAM_STT_MIN_SPEECH_FRAMES    = int(_get("stt_min_speech_frames", "5"))
 SARVAM_STT_VOLUME_THRESHOLD     = int(_get("stt_volume_threshold", "-40"))
-SARVAM_STT_HIGH_VAD             = str(_get("stt_high_vad", "true")).lower() == "true"
+SARVAM_STT_HIGH_VAD             = str(_get("stt_high_vad", "true")).lower() in {"true", "1", "yes", "on"}
 SARVAM_STT_NEGATIVE_FRAMES_COUNT  = int(_get("stt_negative_frames_count", "8"))
 SARVAM_STT_NEGATIVE_FRAMES_WINDOW = int(_get("stt_negative_frames_window", "20"))
 

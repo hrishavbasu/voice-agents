@@ -110,7 +110,10 @@ def _convert_messages(messages: List[dict]) -> tuple:
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")
             if tool_calls:
-                parts = [
+                parts = []
+                if content:
+                    parts.append(types.Part(text=content))
+                parts += [
                     types.Part(
                         function_call=types.FunctionCall(
                             name=tc["function"]["name"],
@@ -171,6 +174,7 @@ async def stream_response(
 
     buffer = ""
     function_calls: List[dict] = []
+    _call_idx = 0
 
     try:
         async for chunk in client.aio.models.generate_content_stream(
@@ -187,9 +191,10 @@ async def stream_response(
             for part in candidate.content.parts:
                 if hasattr(part, "function_call") and part.function_call:
                     fc = part.function_call
+                    _call_idx += 1
                     function_calls.append({
                         "type": "tool_call",
-                        "id": "call_{}".format(fc.name),
+                        "id": "call_{}_{}".format(fc.name, _call_idx),
                         "name": fc.name,
                         "arguments": dict(fc.args) if fc.args else {},
                     })

@@ -52,12 +52,50 @@ _SENTENCE_RE = re.compile(
     r"(?:(?<!Dr\.)(?<!Mr\.)(?<!Ms\.)(?<!Sr\.)(?<!Jr\.)(?<!Mrs\.)(?<!Prof\.)(?<!डॉ\.)(?<=[.!?])\s+|(?<=[।॥])\s*)"
 )
 
+# Secondary split: break long comma-clauses and em-dashes into shorter TTS chunks.
+# Only splits at a comma when the preceding segment is ≥5 words, to avoid splitting
+# short phrases like "हाँ, sure" or "Hello, Priya" into separate TTS calls.
+_CLAUSE_RE = re.compile(r',\s+(?=\S)| — |:\s+(?=\S)')
+
+
+def _clause_split(sentence: str) -> list[str]:
+    """Further split a sentence at comma/em-dash/colon if the leading clause is ≥5 words."""
+    raw_parts = _CLAUSE_RE.split(sentence)
+    if len(raw_parts) == 1:
+        return [sentence]
+    result = []
+    current = raw_parts[0]
+    for part in raw_parts[1:]:
+        if len(current.split()) >= 5:
+            result.append(current.strip())
+            current = part
+        else:
+            current = current + ", " + part
+    if current.strip():
+        result.append(current.strip())
+    return [p for p in result if p]
+
 
 async def stream_response(
     messages: list[dict],
+    tools=None,
+    model: str = LLM_MODEL,
+):
+    """Route to Gemini or OpenAI-compatible provider based on LLM_PROVIDER."""
+    if LLM_PROVIDER == "gemini":
+        from services.llm_gemini import stream_response as _gemini_sr
+        async for item in _gemini_sr(messages, tools=tools, model=model):
+            yield item
+    else:
+        async for item in _openai_stream_response(messages, tools=tools, model=model):
+            yield item
+
+
+async def _openai_stream_response(
+    messages: list[dict],
     tools: Optional[list[dict]] = None,
     model: str = LLM_MODEL,
-) -> AsyncIterator[str | dict]:
+):
     """
     Yield complete sentences (str) as the LLM streams them, so TTS can start
     speaking the first sentence while the LLM is still generating the rest.
@@ -165,12 +203,14 @@ async def stream_response(
                     parts[-1] = sentence + " " + parts[-1]
                     continue
                 logger.debug("LLM sentence: %s", sentence)
-                yield sentence
+                for sub in _clause_split(sentence):
+                    yield sub
             buffer = parts[-1]
 
         # Flush remaining buffer
         if buffer.strip():
-            yield buffer.strip()
+            for sub in _clause_split(buffer.strip()):
+                yield sub
 
         # Yield tool calls
         for tc in tool_calls_acc.values():

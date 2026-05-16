@@ -69,15 +69,16 @@ AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
 
 # Sarvam Bulbul TTS (Indian languages — primary)
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
-SARVAM_TTS_MODEL   = _get("sarvam_tts_model", "bulbul:v2")    # was: bulbul:v1
+SARVAM_TTS_MODEL   = _get("sarvam_tts_model", "bulbul:v3")
 SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "pavithra")   # was: meera
 
 # ── STT provider ──────────────────────────────────────────────────────────────
 STT_PROVIDER = _get("stt_provider", "sarvam")  # sarvam | deepgram
 
-# Sarvam STT WebSocket — verify current WSS URL at https://docs.sarvam.ai
-SARVAM_STT_URL = _get("sarvam_stt_url", "wss://api.sarvam.ai/speech-to-text-translate/subscribe")
-SARVAM_STT_INTERRUPT_MIN_FRAMES = int(_get("stt_interrupt_min_frames", "3"))
+# Sarvam STT — URL built in services/stt_sarvam.build_sarvam_stt_ws_url() (see Sarvam docs)
+# Optional override: set SARVAM_STT_URL to a full wss:// URL (not the legacy /subscribe path)
+SARVAM_STT_URL = os.getenv("SARVAM_STT_URL", "")
+SARVAM_STT_INTERRUPT_MIN_FRAMES = int(_get("stt_interrupt_min_frames", "2"))
 SARVAM_STT_MIN_SPEECH_FRAMES    = int(_get("stt_min_speech_frames", "5"))
 SARVAM_STT_VOLUME_THRESHOLD     = int(_get("stt_volume_threshold", "-40"))
 SARVAM_STT_HIGH_VAD             = str(_get("stt_high_vad", "true")).lower() in {"true", "1", "yes", "on"}
@@ -85,9 +86,9 @@ SARVAM_STT_NEGATIVE_FRAMES_COUNT  = int(_get("stt_negative_frames_count", "8"))
 SARVAM_STT_NEGATIVE_FRAMES_WINDOW = int(_get("stt_negative_frames_window", "20"))
 
 # ── TTS prosody ───────────────────────────────────────────────────────────────
-SARVAM_TTS_PACE     = float(_get("sarvam_tts_pace", "0.9"))
+SARVAM_TTS_PACE     = float(_get("sarvam_tts_pace", "0.92"))
 SARVAM_TTS_PITCH    = float(_get("sarvam_tts_pitch", "0.0"))
-SARVAM_TTS_LOUDNESS = float(_get("sarvam_tts_loudness", "1.5"))
+SARVAM_TTS_LOUDNESS = float(_get("sarvam_tts_loudness", "1.3"))
 
 # ── Gemini LLM ────────────────────────────────────────────────────────────────
 GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY", "")
@@ -95,8 +96,10 @@ GEMINI_MODEL         = _get("llm_model", os.getenv("GEMINI_MODEL", "gemini-2.5-p
 LLM_THINKING_BUDGET  = int(_get("llm_thinking_budget", "0"))
 
 # ── Silence timeout ───────────────────────────────────────────────────────────
-SILENCE_TIMEOUT_SECS = int(_get("silence_timeout_secs", "10"))
-SILENCE_HANGUP_SECS  = int(_get("silence_hangup_secs", "8"))
+SILENCE_TIMEOUT_SECS = int(_get("silence_timeout_secs", "25"))
+SILENCE_HANGUP_SECS  = int(_get("silence_hangup_secs", "15"))
+
+BARGE_IN_ACK_MODE = str(_get("barge_in_ack_mode", "sometimes")).lower()
 
 # ── Adaptive hold (ms) ────────────────────────────────────────────────────────
 ADAPTIVE_HOLD_SHORT_MS  = int(_get("adaptive_hold_short_ms", "400"))
@@ -136,3 +139,5 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "")  # e.g. https://xxxx.ngrok.io
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+CALL_LOGS_ENABLED = os.getenv("CALL_LOGS_ENABLED", "true").lower() == "true"
+CALL_LOGS_DIR = os.getenv("CALL_LOGS_DIR", "logs/calls")

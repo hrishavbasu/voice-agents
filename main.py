@@ -6,6 +6,11 @@ Endpoints:
   POST /telnyx/voice          — Telnyx webhook: starts call-control flow
   WS   /ws/stream/{call_id}   — Carrier WebSocket: bi-directional audio stream
   GET  /health                — Health check
+  GET  /logs                  — Call logging status
+  GET  /logs/calls            — List saved call logs
+  GET  /logs/calls/{call_id}  — Full call log (JSON)
+  GET  /logs/calls/{call_id}/transcript — Plain-text transcript
+  GET  /logs/active           — In-progress calls (live session snapshot)
 
 Set TELEPHONY_PROVIDER=twilio (default) or telnyx in your .env.
 """
@@ -18,11 +23,19 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from config.base_config import HOST, PORT, PUBLIC_URL, LOG_LEVEL
-from pipeline.voice_pipeline import VoicePipeline
+from config.base_config import (
+    HOST,
+    PORT,
+    PUBLIC_URL,
+    LOG_LEVEL,
+    TTS_PROVIDER,
+    SARVAM_API_KEY,
+)
+from pipeline.voice_pipeline import VoicePipeline, collect_warm_cache_phrases
+from services.tts_sarvam import warm_cache_phrases
 from services.telephony import TelephonySession
 from services.pronunciation_dict import ensure_pronunciation_dict
 
@@ -49,6 +62,8 @@ async def lifespan(app: FastAPI):
         PUBLIC_URL or "(not set — set PUBLIC_URL for webhooks)",
     )
     await ensure_pronunciation_dict()
+    if TTS_PROVIDER.lower() == "sarvam" and SARVAM_API_KEY:
+        asyncio.create_task(warm_cache_phrases(collect_warm_cache_phrases()))
     yield
     # Shutdown: close any lingering pipelines
     for pipeline in list(_active_pipelines.values()):
@@ -64,6 +79,121 @@ app = FastAPI(title="Customer Support AI", lifespan=lifespan)
 @app.get("/health")
 async def health():
     return {"status": "ok", "active_calls": len(_active_pipelines)}
+
+
+# ── Call logs API ─────────────────────────────────────────────────────────────
+
+@app.get("/logs")
+async def logs_status():
+    """
+    Call logging configuration and available endpoints.
+
+    Logs are written to disk when each call ends (see CALL_LOGS_DIR in .env).
+    """
+    from pipeline.call_logs import call_logs_status
+
+    status = call_logs_status()
+    return {
+        **status,
+        "active_calls": len(_active_pipelines),
+        "endpoints": {
+            "list": "GET /logs/calls?limit=50",
+            "detail": "GET /logs/calls/{call_id}",
+            "transcript": "GET /logs/calls/{call_id}/transcript",
+            "active": "GET /logs/active",
+        },
+    }
+
+
+@app.get("/logs/calls")
+async def logs_list_calls(limit: int = Query(50, ge=1, le=200)):
+    """List saved call logs (newest first)."""
+    from pipeline.call_logs import call_logs_status, list_call_logs
+
+    status = call_logs_status()
+    if not status["enabled"]:
+        return JSONResponse(
+            {"enabled": False, "calls": [], "message": "CALL_LOGS_ENABLED is false"},
+        )
+    calls = list_call_logs(limit=limit)
+    return JSONResponse({
+        "enabled": True,
+        "directory": status["directory"],
+        "count": len(calls),
+        "calls": calls,
+    })
+
+
+@app.get("/logs/active")
+async def logs_active_calls():
+    """Snapshot of in-progress calls (from memory session, not yet on disk)."""
+    from pipeline.call_logs import build_call_log_record
+    from pipeline.session import get_session
+
+    active = []
+    for call_id, pipeline in _active_pipelines.items():
+        session = await get_session(call_id) or {}
+        if not session:
+            session = {
+                "call_id": call_id,
+                "caller_phone": pipeline.caller_phone,
+                "transcript_lines": [],
+                "flow_state": "active",
+            }
+        record = build_call_log_record(session)
+        record["flow_state"] = "active"
+        record["on_call"] = True
+        active.append(record)
+    return JSONResponse({"active_count": len(active), "calls": active})
+
+
+@app.get("/logs/calls/{call_id}")
+async def logs_get_call(call_id: str):
+    """Full structured log for a call (JSON file or live session if still active)."""
+    from pipeline.call_logs import build_call_log_record, load_call_log_json
+    from pipeline.session import get_session
+
+    data = load_call_log_json(call_id)
+    if data is not None:
+        data["source"] = "file"
+        return JSONResponse(data)
+
+    session = await get_session(call_id)
+    if session:
+        record = build_call_log_record(session)
+        record["source"] = "live_session"
+        record["on_call"] = call_id in _active_pipelines
+        return JSONResponse(record)
+
+    raise HTTPException(status_code=404, detail=f"No log or session for call_id={call_id}")
+
+
+@app.get("/logs/calls/{call_id}/transcript")
+async def logs_get_call_transcript(call_id: str):
+    """Plain-text transcript and metadata for a call."""
+    from pipeline.call_logs import format_call_log_text, load_call_log_text
+    from pipeline.call_logs import build_call_log_record, load_call_log_json
+    from pipeline.session import get_session
+
+    text = load_call_log_text(call_id)
+    if text is not None:
+        return PlainTextResponse(text, media_type="text/plain; charset=utf-8")
+
+    data = load_call_log_json(call_id)
+    if data is not None:
+        return PlainTextResponse(
+            format_call_log_text(data),
+            media_type="text/plain; charset=utf-8",
+        )
+
+    session = await get_session(call_id)
+    if session:
+        return PlainTextResponse(
+            format_call_log_text(build_call_log_record(session)),
+            media_type="text/plain; charset=utf-8",
+        )
+
+    raise HTTPException(status_code=404, detail=f"No log or session for call_id={call_id}")
 
 
 # ── Config API ────────────────────────────────────────────────────────────────

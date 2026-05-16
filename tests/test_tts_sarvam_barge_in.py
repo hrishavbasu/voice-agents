@@ -94,7 +94,8 @@ async def test_prosody_params_sent_in_payload():
     with patch("services.tts_sarvam._get_http_client", AsyncMock(return_value=mock_client)):
         with patch.dict("os.environ", {"SARVAM_API_KEY": "test-key"}):
             import services.tts_sarvam as mod
-            with patch.object(mod, "SARVAM_TTS_PACE", 0.9), \
+            with patch.object(mod, "SARVAM_TTS_MODEL", "bulbul:v2"), \
+                 patch.object(mod, "SARVAM_TTS_PACE", 0.9), \
                  patch.object(mod, "SARVAM_TTS_PITCH", 0.05), \
                  patch.object(mod, "SARVAM_TTS_LOUDNESS", 1.5):
                 from services.tts_sarvam import sarvam_synthesize

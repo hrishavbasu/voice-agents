@@ -60,6 +60,10 @@ class TTSService:
         self._cancel_flag[0] = True
         logger.debug("TTS: cancel requested")
 
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+
     def reset(self) -> None:
         """Clear the cancel flag before starting a new utterance."""
         self._cancelled = False

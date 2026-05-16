@@ -18,10 +18,13 @@ def client(tmp_path):
         return TestClient(app)
 
 
-def test_get_config_returns_empty_dict_when_no_file(client):
-    response = client.get("/config")
-    assert response.status_code == 200
-    assert response.json() == {}
+def test_get_config_returns_empty_dict_when_no_file(client, tmp_path):
+    import config.user_settings as us_mod
+    tmp_settings = tmp_path / "empty_settings.json"
+    with patch.object(us_mod, "_PATH", tmp_settings):
+        response = client.get("/config")
+        assert response.status_code == 200
+        assert response.json() == {}
 
 
 def test_post_config_saves_settings(client, tmp_path):

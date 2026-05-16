@@ -61,3 +61,15 @@ def test_strip_markdown_preserves_hindi():
     from pipeline.voice_pipeline import _strip_markdown
     result = _strip_markdown("**नमस्ते** Priya")
     assert result == "नमस्ते Priya"
+
+
+def test_normalize_for_tts_neutralizes_gendered_caller_phrasing():
+    from pipeline.voice_pipeline import VoicePipeline
+    result = VoicePipeline._normalize_for_tts("क्या आप सोमवार को आना चाहेंगे?")
+    assert "आना ठीक रहेगा" in result
+
+
+def test_normalize_for_tts_replaces_honorific_madam():
+    from pipeline.voice_pipeline import VoicePipeline
+    result = VoicePipeline._normalize_for_tts("Ma'am, आपको किस दिन appointment चाहिए?")
+    assert "Ma'am" not in result

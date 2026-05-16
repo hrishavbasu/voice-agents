@@ -48,23 +48,27 @@ class InterruptionController:
     def is_interrupted(self) -> bool:
         return self._interrupted
 
-    async def trigger(self) -> None:
-        """Called when speech is detected during TTS playback.
-
-        A 150 ms debounce prevents a single noise spike from killing the
-        current TTS sentence.  If reset() is called within the debounce
-        window (e.g. TTS finished naturally), the interrupt is discarded.
-        """
-        if self._interrupted or self._debouncing:
+    async def trigger_immediate(self) -> None:
+        """Stop TTS/LLM playback immediately — no debounce."""
+        if self._interrupted:
             return
+        self._interrupted = True
+        self._debouncing = False
+        self._event.set()
+        logger.debug("Barge-in: immediate interrupt")
+
+    async def debounce_ack_gate(self) -> bool:
+        """Wait 150ms; return True if still interrupted (play ack). False if reset()."""
+        if not self._interrupted:
+            return False
         self._debouncing = True
         await asyncio.sleep(self._DEBOUNCE_SECS)
         self._debouncing = False
-        # Check again — reset() may have been called during the sleep
-        if not self._interrupted:
-            self._interrupted = True
-            self._event.set()
-            logger.debug("Barge-in confirmed after debounce")
+        return self._interrupted
+
+    async def trigger(self) -> None:
+        """Backward-compatible alias for immediate interrupt."""
+        await self.trigger_immediate()
 
     def reset(self) -> None:
         """Call this before starting each new TTS utterance."""

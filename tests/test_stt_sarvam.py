@@ -1,12 +1,12 @@
 """Tests for Sarvam STT WebSocket client."""
 import pytest
 
+from services.stt_sarvam import SarvamSTT, build_sarvam_stt_ws_url, _LEGACY_SUBSCRIBE_PATH
+
 
 @pytest.fixture
 def make_stt():
     """Factory: return a SarvamSTT with mock callbacks and tracking lists."""
-    from services.stt_sarvam import SarvamSTT
-
     def _make(on_transcript=None, on_speech_started=None):
         transcripts = []
         speech_starts = []
@@ -28,65 +28,94 @@ def make_stt():
     return _make
 
 
+def test_build_url_uses_speech_to_text_ws():
+    url = build_sarvam_stt_ws_url()
+    assert "/speech-to-text/ws" in url
+    assert _LEGACY_SUBSCRIBE_PATH not in url
+    assert "sample_rate=16000" in url
+    assert "language-code=hi-IN" in url
+
+
+def test_build_url_replaces_legacy_subscribe(monkeypatch):
+    monkeypatch.setenv(
+        "SARVAM_STT_URL",
+        "wss://api.sarvam.ai/speech-to-text-translate/subscribe",
+    )
+    url = build_sarvam_stt_ws_url()
+    assert "/speech-to-text/ws" in url
+
+
 @pytest.mark.asyncio
-async def test_speech_started_fires_callback(make_stt):
+async def test_start_speech_fires_callback(make_stt):
     stt = make_stt()
-    await stt._handle_event({"type": "speech_started"})
+    await stt._handle_message({
+        "type": "events",
+        "data": {"signal_type": "START_SPEECH"},
+    })
     assert len(stt._speech_starts) == 1
 
 
 @pytest.mark.asyncio
-async def test_speech_started_clears_utterance_parts(make_stt):
+async def test_end_speech_flushes_transcript(make_stt):
     stt = make_stt()
-    stt._utterance_parts = ["partial", "text"]
-    await stt._handle_event({"type": "speech_started"})
-    assert stt._utterance_parts == []
-
-
-@pytest.mark.asyncio
-async def test_final_transcript_fires_callback(make_stt):
-    stt = make_stt()
-    await stt._handle_event({"type": "transcript", "transcript": "hello world", "is_final": True})
+    await stt._handle_message({
+        "type": "data",
+        "data": {"transcript": "hello there"},
+    })
+    await stt._handle_message({
+        "type": "events",
+        "data": {"signal_type": "END_SPEECH"},
+    })
     assert len(stt._transcripts) == 1
-    assert stt._transcripts[0][0] == "hello world"
-    assert stt._transcripts[0][1] is True
+    assert "hello there" in stt._transcripts[0][0]
 
 
 @pytest.mark.asyncio
-async def test_non_final_transcript_accumulates(make_stt):
+async def test_end_before_data_still_flushes(make_stt):
+    """Sarvam often sends END_SPEECH before the type=data transcript."""
     stt = make_stt()
-    await stt._handle_event({"type": "transcript", "transcript": "hello", "is_final": False})
-    assert stt._utterance_parts == ["hello"]
+    await stt._handle_message({
+        "type": "events",
+        "data": {"signal_type": "START_SPEECH"},
+    })
+    await stt._handle_message({
+        "type": "events",
+        "data": {"signal_type": "END_SPEECH"},
+    })
     assert len(stt._transcripts) == 0
+    await stt._handle_message({
+        "type": "data",
+        "data": {"transcript": "मुझे appointment चाहिए"},
+    })
+    assert len(stt._transcripts) == 1
+    assert "appointment" in stt._transcripts[0][0]
 
 
 @pytest.mark.asyncio
-async def test_final_transcript_appends_accumulated_parts(make_stt):
+async def test_data_segments_accumulate_until_end(make_stt):
     stt = make_stt()
-    stt._utterance_parts = ["I want to book"]
-    await stt._handle_event({"type": "transcript", "transcript": "an appointment", "is_final": True})
+    await stt._handle_message({"type": "data", "data": {"transcript": "I want"}})
+    await stt._handle_message({"type": "data", "data": {"transcript": "an appointment"}})
+    await stt._handle_message({"type": "events", "data": {"signal_type": "END_SPEECH"}})
     text = stt._transcripts[0][0]
-    assert "I want to book" in text
-    assert "an appointment" in text
+    assert "I want" in text
+    assert "appointment" in text
 
 
 @pytest.mark.asyncio
-async def test_single_word_utterance_discarded(make_stt):
+async def test_single_word_utterance_accepted(make_stt):
     stt = make_stt()
-    await stt._handle_event({"type": "transcript", "transcript": "हाँ", "is_final": True})
-    assert len(stt._transcripts) == 0
+    await stt._handle_message({"type": "data", "data": {"transcript": "हाँ"}})
+    await stt._handle_message({"type": "events", "data": {"signal_type": "END_SPEECH"}})
+    assert len(stt._transcripts) == 1
 
 
 @pytest.mark.asyncio
-async def test_empty_transcript_ignored(make_stt):
+async def test_legacy_transcript_final(make_stt):
     stt = make_stt()
-    await stt._handle_event({"type": "transcript", "transcript": "", "is_final": True})
-    assert len(stt._transcripts) == 0
-
-
-@pytest.mark.asyncio
-async def test_unknown_event_type_ignored(make_stt):
-    stt = make_stt()
-    await stt._handle_event({"type": "heartbeat"})
-    assert len(stt._speech_starts) == 0
-    assert len(stt._transcripts) == 0
+    await stt._handle_message({
+        "type": "transcript",
+        "transcript": "hello world",
+        "is_final": True,
+    })
+    assert stt._transcripts[0][0] == "hello world"

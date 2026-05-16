@@ -138,9 +138,11 @@ async def sarvam_synthesize(
             "speaker": SARVAM_TTS_SPEAKER,
             "speech_sample_rate": 8000,
             "pace": SARVAM_TTS_PACE,
-            "pitch": _pitch,
-            "loudness": SARVAM_TTS_LOUDNESS,
         }
+        # Bulbul v3 rejects pitch/loudness — only send for v1/v2
+        if "v3" not in SARVAM_TTS_MODEL.lower():
+            payload["pitch"] = _pitch
+            payload["loudness"] = SARVAM_TTS_LOUDNESS
         headers = {
             "api-subscription-key": api_key,
             "Content-Type": "application/json",
@@ -200,3 +202,27 @@ async def sarvam_synthesize(
         if cancelled_flag[0]:
             return
         yield audio_bytes[i: i + chunk_size]
+
+
+async def sarvam_synthesize_to_bytes(
+    text: str,
+    language_code: str = "hi-IN",
+    pitch_override: Optional[float] = None,
+) -> bytes:
+    """Synthesize full utterance to μ-law bytes (for prefetch / warm-cache)."""
+    cancelled = [False]
+    parts: list[bytes] = []
+    async for chunk in sarvam_synthesize(text, cancelled, language_code, pitch_override):
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+async def warm_cache_phrases(phrases: list[tuple[str, str]]) -> None:
+    """Populate LRU cache for common phrases; log and skip on failure."""
+    for text, lang in phrases:
+        if not text.strip():
+            continue
+        try:
+            await sarvam_synthesize_to_bytes(text.strip(), lang)
+        except Exception as exc:
+            logger.debug("Warm-cache skip %r: %s", text[:40], exc)

@@ -229,6 +229,14 @@
       <textarea id="agent_persona" placeholder="warm, professional, and caring"></textarea>
     </div>
     <div class="field">
+      <label>Barge-in acknowledgment</label>
+      <select id="barge_in_ack_mode">
+        <option value="silent">silent</option>
+        <option value="sometimes">sometimes (default)</option>
+        <option value="always">always</option>
+      </select>
+    </div>
+    <div class="field">
       <label>Default language</label>
       <select id="agent_default_language">
         <option value="hinglish">Hinglish (Hindi-English mix)</option>
@@ -253,7 +261,7 @@ const FIELDS = [
   'llm_provider','llm_model','llm_temperature','llm_max_tokens','llm_thinking_budget',
   'silence_timeout_secs','silence_hangup_secs',
   'adaptive_hold_short_ms','adaptive_hold_normal_ms',
-  'agent_name','agent_persona','agent_default_language',
+  'agent_name','agent_persona','agent_default_language','barge_in_ack_mode',
 ];
 const RANGES = new Set(['stt_volume_threshold','sarvam_tts_pace','sarvam_tts_pitch','sarvam_tts_loudness','llm_temperature']);
 

@@ -113,6 +113,8 @@ async def sarvam_synthesize(
         text: Text to synthesize (Hindi, English, or Hinglish).
         cancelled_flag: Single-element list [False]; set to [True] to stop mid-stream.
         language_code: "hi-IN" for Hindi/Hinglish, "en-IN" for Indian English.
+        pitch_override: Optional pitch value (−1.0–1.0). Pass 0.05 for questions.
+            Defaults to SARVAM_TTS_PITCH config value when None.
     """
     api_key = (os.getenv("SARVAM_API_KEY") or SARVAM_API_KEY or "").strip()
     if not api_key:
@@ -120,7 +122,8 @@ async def sarvam_synthesize(
             "SARVAM_API_KEY is not configured. Add it to .env: SARVAM_API_KEY=your_key"
         )
 
-    cache_key = (text, language_code, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER)
+    _pitch = pitch_override if pitch_override is not None else SARVAM_TTS_PITCH
+    cache_key = (text, language_code, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER, _pitch)
     audio_bytes = _cache_get(cache_key)
 
     if audio_bytes is None:
@@ -128,8 +131,6 @@ async def sarvam_synthesize(
         # common case where barge-in fires in the gap between two sentences.
         if cancelled_flag[0]:
             return
-
-        _pitch = pitch_override if pitch_override is not None else SARVAM_TTS_PITCH
         payload = {
             "text": text,
             "target_language_code": language_code,

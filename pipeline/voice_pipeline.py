@@ -37,7 +37,7 @@ from pipeline.session import (
     end_session,
 )
 from prompts.system_prompt import build_system_prompt
-from services.stt import DeepgramSTT
+from services.stt import get_stt
 from services.llm import stream_response
 from services.tts import TTSService, FILLER_TEXTS
 from tools.definitions import get_tool_schemas
@@ -97,6 +97,11 @@ TOOL_FILLERS: dict[str, list[str]] = {
         "हाँ, मैं अभी देख लेती हूँ।",
     ],
 }
+_BARGE_IN_ACK: dict = {
+    "hindi":    ["haan, bataiye", "ji, haan?", "haan ji?"],
+    "hinglish": ["haan, bataiye", "yes, bataiye?", "haan ji?"],
+    "english":  ["yes, go ahead", "please go on"],
+}
 # Keywords that require an immediate hard emergency response before LLM.
 # Language-inclusive: covers English + common Hindi/Hinglish equivalents.
 # Matched with word boundaries via re — avoids substring false positives
@@ -124,12 +129,14 @@ class VoicePipeline:
 
         self._tts = TTSService()
         self._interruption = InterruptionController()
-        self._stt: Optional[DeepgramSTT] = None
+        self._stt: Optional = None
 
         self._tool_schemas = get_tool_schemas()
         self._crm_contact: Optional[dict] = None
         self._caller_language: str = "hinglish"  # updated on first clear detection
-        self._tts_playing = False  # guard: only barge-in when TTS is active
+        self._tts_playing = False   # True when a TTS chunk is actively streaming
+        self._agent_in_turn = False  # True for the entire agent response turn (multi-sentence)
+        self._playback_until = 0.0
 
         # Queue of final STT transcripts waiting to be processed
         self._transcript_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -148,7 +155,7 @@ class VoicePipeline:
         asyncio.create_task(self._async_crm_lookup())
 
         # Connect STT
-        self._stt = DeepgramSTT(
+        self._stt = get_stt(
             on_transcript=self._on_transcript,
             on_speech_started=self._on_speech_started,
         )
@@ -192,14 +199,29 @@ class VoicePipeline:
 
     async def _on_speech_started(self) -> None:
         """Barge-in: cancel TTS only if agent is currently speaking."""
-        if not self._tts_playing:
+        speaking_or_buffered = (
+            self._tts_playing
+            or self._agent_in_turn
+            or (time.monotonic() < self._playback_until)
+        )
+        if not speaking_or_buffered:
             return
+        sentences_spoken = getattr(self, "_sentences_spoken_this_turn", 0)
         self._tts.cancel()
         await self._interruption.trigger()
+        await self._telephony.clear_playback_buffer()
         # Discard transcripts queued during TTS playback (stale/echo fragments)
         while not self._transcript_queue.empty():
             self._transcript_queue.get_nowait()
-        await self._telephony.send_silence(50)
+        # Tail silence clears handset jitter after a hard barge-in cut.
+        await self._telephony.send_silence(80)
+        # Acknowledge the interruption if agent had already spoken ≥ 1 sentence —
+        # avoids acknowledging coughs or noise that fire before any speech.
+        if sentences_spoken >= 1:
+            lang = self._caller_language if self._caller_language in _BARGE_IN_ACK else "hinglish"
+            ack = random.choice(_BARGE_IN_ACK[lang])
+            self._interruption.reset()
+            await self._speak(ack)
 
     # ── LLM processing loop ───────────────────────────────────────────────────
 
@@ -267,6 +289,8 @@ class VoicePipeline:
 
             # Stream LLM response
             assistant_text_parts = []
+            self._agent_in_turn = True
+            self._sentences_spoken_this_turn = 0
             self._interruption.reset()
             self._tts.reset()
             correction_text: str | None = None
@@ -290,11 +314,13 @@ class VoicePipeline:
                 if isinstance(item, str):
                     # Sentence — speak it and record it
                     assistant_text_parts.append(item)
+                    self._sentences_spoken_this_turn += 1
                     await self._speak(item)
 
                 elif isinstance(item, dict) and item.get("type") == "tool_call":
                     await self._handle_tool_call(item)
 
+            self._agent_in_turn = False
             # Record full assistant turn
             if assistant_text_parts:
                 full_response = " ".join(assistant_text_parts)
@@ -364,7 +390,9 @@ class VoicePipeline:
                 await self._telephony.send_audio(padded)
         finally:
             self._tts_playing = False
-        return total_bytes / 8000
+        duration = total_bytes / 8000
+        self._playback_until = time.monotonic() + duration + 0.25
+        return duration
 
     async def _play_filler(self) -> None:
         """Play a random filler phrase in the caller's language.
@@ -477,6 +505,10 @@ class VoicePipeline:
         # Feed tool result back to LLM using the proper tool-role format so it
         # continues the conversation naturally (no separate summarize call needed).
         await self._speak_tool_result(name, tool_id, args, result)
+
+        # Soft-close successful booking calls to avoid open-ended loops.
+        if name == "book_appointment" and result.get("success"):
+            await self._soft_close_after_booking()
 
     async def _speak_tool_result(
         self, tool_name: str, tool_call_id: str, tool_args: dict, result: dict
@@ -619,6 +651,22 @@ class VoicePipeline:
         )
         self._running = False
         return True
+
+    async def _soft_close_after_booking(self) -> None:
+        if not self._running:
+            return
+        lang = self._caller_language
+        if lang == "english":
+            msg = "Your appointment is confirmed. Thank you for calling Apollo Hospitals. Have a good day."
+        elif lang == "hindi":
+            msg = "आपकी अपॉइंटमेंट कन्फर्म हो गई है। Apollo Hospitals पर कॉल करने के लिए धन्यवाद। आपका दिन शुभ हो।"
+        else:
+            msg = "Aapki appointment confirm ho gayi hai. Apollo Hospitals ko call karne ke liye dhanyavaad."
+        self._interruption.reset()
+        duration = await self._speak(msg)
+        await asyncio.sleep(duration + 0.2)
+        await self._telephony.hangup()
+        self._running = False
 
     def _build_greeting(self) -> str:
         cfg = COMPANY_CONFIG

@@ -1,8 +1,5 @@
 """Tests for Sarvam STT WebSocket client."""
-import asyncio
-import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture

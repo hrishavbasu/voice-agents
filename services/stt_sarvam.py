@@ -43,7 +43,7 @@ class SarvamSTT:
         self._ws = None
         self._receive_task: Optional[asyncio.Task] = None
         self._keepalive_task: Optional[asyncio.Task] = None
-        self._utterance_parts: list = []
+        self._utterance_parts: list[str] = []
 
     async def connect(self) -> None:
         """Open WebSocket connection and send barge-in config."""
@@ -85,10 +85,15 @@ class SarvamSTT:
 
     async def close(self) -> None:
         """Gracefully shut down the WebSocket and background tasks."""
+        tasks = []
         if self._receive_task:
             self._receive_task.cancel()
+            tasks.append(self._receive_task)
         if self._keepalive_task:
             self._keepalive_task.cancel()
+            tasks.append(self._keepalive_task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self._ws:
             try:
                 await self._ws.close()
@@ -105,12 +110,14 @@ class SarvamSTT:
                 try:
                     data = json.loads(message)
                     await self._handle_event(data)
-                except (json.JSONDecodeError, KeyError) as exc:
+                except json.JSONDecodeError as exc:
                     logger.warning("Sarvam STT parse error: %s", exc)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             logger.error("Sarvam STT receive_loop ended: %s", exc)
+        finally:
+            self._ws = None  # allows _keepalive_loop to exit cleanly
 
     async def _handle_event(self, data: dict) -> None:
         event_type = data.get("type", "")

@@ -2,6 +2,9 @@
 .env
 *.env.local
 
+# Runtime user settings (overrides .env; never commit)
+config/user_settings.json
+
 # GCP credentials — never commit service account keys
 *.json
 !package.json

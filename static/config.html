@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Agent Config</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; color: #1a1a1a; padding: 24px; }
+    h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 20px; color: #111; }
+    .card { background: #fff; border-radius: 10px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .card-header {
+      padding: 14px 18px; cursor: pointer; display: flex; justify-content: space-between;
+      align-items: center; font-weight: 600; font-size: 0.95rem; user-select: none;
+    }
+    .card-header:hover { background: #fafafa; border-radius: 10px; }
+    .card-body { padding: 18px 18px 8px; display: none; border-top: 1px solid #f0f0f0; }
+    .card-body.open { display: block; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 0.82rem; font-weight: 500; margin-bottom: 5px; color: #555; }
+    label small { font-weight: 400; color: #888; margin-left: 4px; }
+    input[type=text], input[type=number], select, textarea {
+      width: 100%; padding: 7px 10px; border: 1px solid #ddd; border-radius: 6px;
+      font-size: 0.88rem; background: #fafafa;
+    }
+    input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+      outline: none; border-color: #2563eb; background: #fff;
+    }
+    textarea { height: 72px; resize: vertical; }
+    .range-row { display: flex; align-items: center; gap: 10px; }
+    input[type=range] { flex: 1; accent-color: #2563eb; }
+    .range-val { font-size: 0.82rem; width: 44px; text-align: right; color: #444; font-family: monospace; }
+    .toggle-row { display: flex; align-items: center; gap: 8px; }
+    .toggle-row label { margin: 0; font-size: 0.88rem; }
+    input[type=checkbox] { width: 16px; height: 16px; accent-color: #2563eb; }
+    .save-area { text-align: center; margin-top: 20px; padding-bottom: 32px; }
+    button {
+      background: #2563eb; color: #fff; border: none; padding: 11px 36px;
+      border-radius: 8px; font-size: 0.95rem; cursor: pointer; font-weight: 600;
+    }
+    button:hover { background: #1d4ed8; }
+    button:active { background: #1e40af; }
+    #msg { margin-top: 10px; font-size: 0.88rem; min-height: 1.3em; }
+    #msg.ok { color: #16a34a; }
+    #msg.err { color: #dc2626; }
+    .chev { transition: transform 0.2s; display: inline-block; margin-left: 6px; }
+    .chev.open { transform: rotate(180deg); }
+  </style>
+</head>
+<body>
+<h1>Voice Agent Settings</h1>
+
+<!-- STT -->
+<div class="card">
+  <div class="card-header" onclick="toggle('stt')">
+    STT — Speech Recognition <span class="chev" id="stt-chev">▼</span>
+  </div>
+  <div class="card-body" id="stt-body">
+    <div class="field">
+      <label>Provider</label>
+      <select id="stt_provider">
+        <option value="sarvam">Sarvam (recommended — Indian acoustic VAD)</option>
+        <option value="deepgram">Deepgram (Nova-3)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Interrupt min speech frames <small>(lower = faster barge-in; higher = fewer false triggers)</small></label>
+      <input type="number" id="stt_interrupt_min_frames" min="1" max="20">
+    </div>
+    <div class="field">
+      <label>Min speech frames <small>(frames of voice needed to register a valid turn)</small></label>
+      <input type="number" id="stt_min_speech_frames" min="1" max="30">
+    </div>
+    <div class="field">
+      <label>Volume threshold dB <small>(−40 = ignore background hum; 0 = hear everything)</small></label>
+      <div class="range-row">
+        <input type="range" id="stt_volume_threshold" min="-60" max="0" step="1"
+               oninput="rv('stt_volume_threshold_v', this.value)">
+        <span class="range-val" id="stt_volume_threshold_v">-40</span>
+      </div>
+    </div>
+    <div class="field toggle-row">
+      <input type="checkbox" id="stt_high_vad">
+      <label for="stt_high_vad">High VAD sensitivity (stricter — fewer noise false-positives)</label>
+    </div>
+    <div class="field">
+      <label>Negative frames count <small>(silence frames before turn ends)</small></label>
+      <input type="number" id="stt_negative_frames_count" min="1" max="30">
+    </div>
+    <div class="field">
+      <label>Negative frames window</label>
+      <input type="number" id="stt_negative_frames_window" min="5" max="50">
+    </div>
+  </div>
+</div>
+
+<!-- TTS -->
+<div class="card">
+  <div class="card-header" onclick="toggle('tts')">
+    TTS — Text to Speech <span class="chev" id="tts-chev">▼</span>
+  </div>
+  <div class="card-body" id="tts-body">
+    <div class="field">
+      <label>Provider</label>
+      <select id="tts_provider">
+        <option value="sarvam">Sarvam Bulbul</option>
+        <option value="elevenlabs">ElevenLabs</option>
+        <option value="azure">Azure</option>
+        <option value="deepgram">Deepgram Aura</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Speaker</label>
+      <select id="sarvam_tts_speaker">
+        <option value="pavithra">pavithra (warm, conversational)</option>
+        <option value="meera">meera</option>
+        <option value="kalpana">kalpana</option>
+        <option value="arvind">arvind (male)</option>
+        <option value="amol">amol (male)</option>
+        <option value="amartya">amartya (male)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <input type="text" id="sarvam_tts_model" placeholder="bulbul:v2">
+    </div>
+    <div class="field">
+      <label>Pace <small>(0.5 = slow · 1.0 = normal · 2.0 = fast)</small></label>
+      <div class="range-row">
+        <input type="range" id="sarvam_tts_pace" min="0.5" max="2.0" step="0.05"
+               oninput="rv('sarvam_tts_pace_v', parseFloat(this.value).toFixed(2))">
+        <span class="range-val" id="sarvam_tts_pace_v">0.90</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Pitch <small>(−1.0 = lower · 0.0 = normal · 1.0 = higher)</small></label>
+      <div class="range-row">
+        <input type="range" id="sarvam_tts_pitch" min="-1.0" max="1.0" step="0.05"
+               oninput="rv('sarvam_tts_pitch_v', parseFloat(this.value).toFixed(2))">
+        <span class="range-val" id="sarvam_tts_pitch_v">0.00</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Loudness <small>(0.5 = quiet · 1.5 = normal+ · 3.0 = loud)</small></label>
+      <div class="range-row">
+        <input type="range" id="sarvam_tts_loudness" min="0.5" max="3.0" step="0.1"
+               oninput="rv('sarvam_tts_loudness_v', parseFloat(this.value).toFixed(1))">
+        <span class="range-val" id="sarvam_tts_loudness_v">1.5</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LLM -->
+<div class="card">
+  <div class="card-header" onclick="toggle('llm')">
+    LLM <span class="chev" id="llm-chev">▼</span>
+  </div>
+  <div class="card-body" id="llm-body">
+    <div class="field">
+      <label>Provider</label>
+      <select id="llm_provider">
+        <option value="gemini">Gemini (recommended)</option>
+        <option value="groq">Groq</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="cerebras">Cerebras</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Model</label>
+      <input type="text" id="llm_model" placeholder="gemini-2.5-pro-preview-06-05">
+    </div>
+    <div class="field">
+      <label>Temperature <small>(0.0 = focused · 0.5 = balanced · 1.0 = creative)</small></label>
+      <div class="range-row">
+        <input type="range" id="llm_temperature" min="0.0" max="1.0" step="0.05"
+               oninput="rv('llm_temperature_v', parseFloat(this.value).toFixed(2))">
+        <span class="range-val" id="llm_temperature_v">0.50</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Max tokens</label>
+      <input type="number" id="llm_max_tokens" min="50" max="1000" step="10">
+    </div>
+    <div class="field">
+      <label>Thinking budget <small>(Gemini only — 0 disables chain-of-thought, required for voice speed)</small></label>
+      <input type="number" id="llm_thinking_budget" min="0" max="10000" step="100">
+    </div>
+  </div>
+</div>
+
+<!-- Prosody -->
+<div class="card">
+  <div class="card-header" onclick="toggle('prosody')">
+    Prosody &amp; Timing <span class="chev" id="prosody-chev">▼</span>
+  </div>
+  <div class="card-body" id="prosody-body">
+    <div class="field">
+      <label>Silence prompt timeout (seconds) <small>(how long before "are you still there?")</small></label>
+      <input type="number" id="silence_timeout_secs" min="5" max="60">
+    </div>
+    <div class="field">
+      <label>Silence hangup timeout (seconds) <small>(after prompt, how long to wait before hanging up)</small></label>
+      <input type="number" id="silence_hangup_secs" min="5" max="60">
+    </div>
+    <div class="field">
+      <label>Adaptive hold — short utterance (ms) <small>(hold for "haan", "okay" fillers)</small></label>
+      <input type="number" id="adaptive_hold_short_ms" min="100" max="1000" step="50">
+    </div>
+    <div class="field">
+      <label>Adaptive hold — normal utterance (ms)</label>
+      <input type="number" id="adaptive_hold_normal_ms" min="50" max="500" step="25">
+    </div>
+  </div>
+</div>
+
+<!-- Agent -->
+<div class="card">
+  <div class="card-header" onclick="toggle('agent')">
+    Agent <span class="chev" id="agent-chev">▼</span>
+  </div>
+  <div class="card-body" id="agent-body">
+    <div class="field">
+      <label>Agent name</label>
+      <input type="text" id="agent_name" placeholder="Priya">
+    </div>
+    <div class="field">
+      <label>Persona</label>
+      <textarea id="agent_persona" placeholder="warm, professional, and caring"></textarea>
+    </div>
+    <div class="field">
+      <label>Default language</label>
+      <select id="agent_default_language">
+        <option value="hinglish">Hinglish (Hindi-English mix)</option>
+        <option value="hindi">Hindi only</option>
+        <option value="english">English only</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div class="save-area">
+  <button onclick="save()">Save Settings</button>
+  <div id="msg"></div>
+</div>
+
+<script>
+const FIELDS = [
+  'stt_provider','stt_interrupt_min_frames','stt_min_speech_frames',
+  'stt_volume_threshold','stt_high_vad','stt_negative_frames_count','stt_negative_frames_window',
+  'tts_provider','sarvam_tts_speaker','sarvam_tts_model',
+  'sarvam_tts_pace','sarvam_tts_pitch','sarvam_tts_loudness',
+  'llm_provider','llm_model','llm_temperature','llm_max_tokens','llm_thinking_budget',
+  'silence_timeout_secs','silence_hangup_secs',
+  'adaptive_hold_short_ms','adaptive_hold_normal_ms',
+  'agent_name','agent_persona','agent_default_language',
+];
+const RANGES = new Set(['stt_volume_threshold','sarvam_tts_pace','sarvam_tts_pitch','sarvam_tts_loudness','llm_temperature']);
+
+function rv(valId, v) { document.getElementById(valId).textContent = v; }
+
+function toggle(id) {
+  const body = document.getElementById(id + '-body');
+  const chev = document.getElementById(id + '-chev');
+  const open = body.classList.toggle('open');
+  chev.classList.toggle('open', open);
+}
+
+function getVal(id) {
+  const el = document.getElementById(id);
+  if (!el) return undefined;
+  if (el.type === 'checkbox') return el.checked;
+  if (el.type === 'number' || RANGES.has(id)) return parseFloat(el.value);
+  return el.value;
+}
+
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (!el || v === undefined || v === null) return;
+  if (el.type === 'checkbox') { el.checked = Boolean(v); return; }
+  el.value = v;
+  if (RANGES.has(id)) {
+    const suffix = '_v';
+    const display = document.getElementById(id + suffix);
+    if (display) display.textContent = parseFloat(v).toFixed(id === 'sarvam_tts_loudness' ? 1 : 2);
+  }
+}
+
+async function load() {
+  try {
+    const res = await fetch('/config');
+    const data = await res.json();
+    FIELDS.forEach(id => setVal(id, data[id]));
+  } catch(e) {
+    showMsg('Could not load settings: ' + e.message, 'err');
+  }
+}
+
+async function save() {
+  const data = {};
+  FIELDS.forEach(id => { data[id] = getVal(id); });
+  try {
+    const res = await fetch('/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (res.ok) {
+      showMsg('Settings saved. Changes apply to new calls.', 'ok');
+    } else {
+      showMsg('Save failed: ' + await res.text(), 'err');
+    }
+  } catch(e) {
+    showMsg('Save failed: ' + e.message, 'err');
+  }
+}
+
+function showMsg(text, cls) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = cls;
+}
+
+load();
+</script>
+</body>
+</html>

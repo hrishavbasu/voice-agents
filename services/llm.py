@@ -29,6 +29,7 @@ from config.base_config import (
     LLM_MODEL,
     LLM_MAX_TOKENS,
     LLM_TEMPERATURE,
+    GEMINI_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,15 +80,15 @@ def _clause_split(sentence: str) -> list[str]:
 async def stream_response(
     messages: list[dict],
     tools=None,
-    model: str = LLM_MODEL,
+    model=None,
 ):
     """Route to Gemini or OpenAI-compatible provider based on LLM_PROVIDER."""
     if LLM_PROVIDER == "gemini":
         from services.llm_gemini import stream_response as _gemini_sr
-        async for item in _gemini_sr(messages, tools=tools, model=model):
+        async for item in _gemini_sr(messages, tools=tools, model=model or GEMINI_MODEL):
             yield item
     else:
-        async for item in _openai_stream_response(messages, tools=tools, model=model):
+        async for item in _openai_stream_response(messages, tools=tools, model=model or LLM_MODEL):
             yield item
 
 

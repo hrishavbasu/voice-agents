@@ -15,6 +15,7 @@ Usage:
     cancelled[0] = True
 """
 
+import asyncio
 import audioop
 import base64
 import io
@@ -26,7 +27,14 @@ from typing import AsyncIterator, Optional
 
 import httpx
 
-from config.base_config import SARVAM_API_KEY, SARVAM_TTS_MODEL, SARVAM_TTS_SPEAKER
+from config.base_config import (
+    SARVAM_API_KEY,
+    SARVAM_TTS_MODEL,
+    SARVAM_TTS_SPEAKER,
+    SARVAM_TTS_PACE,
+    SARVAM_TTS_PITCH,
+    SARVAM_TTS_LOUDNESS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +104,7 @@ async def sarvam_synthesize(
     text: str,
     cancelled_flag: list,
     language_code: str = "hi-IN",
+    pitch_override: Optional[float] = None,
 ) -> AsyncIterator[bytes]:
     """
     Synthesize speech with Sarvam Bulbul and yield raw μ-law 8kHz chunks.
@@ -115,12 +124,21 @@ async def sarvam_synthesize(
     audio_bytes = _cache_get(cache_key)
 
     if audio_bytes is None:
+        # Check cancel flag before starting the network request — handles the
+        # common case where barge-in fires in the gap between two sentences.
+        if cancelled_flag[0]:
+            return
+
+        _pitch = pitch_override if pitch_override is not None else SARVAM_TTS_PITCH
         payload = {
             "text": text,
             "target_language_code": language_code,
             "model": SARVAM_TTS_MODEL,
             "speaker": SARVAM_TTS_SPEAKER,
             "speech_sample_rate": 8000,
+            "pace": SARVAM_TTS_PACE,
+            "pitch": _pitch,
+            "loudness": SARVAM_TTS_LOUDNESS,
         }
         headers = {
             "api-subscription-key": api_key,
@@ -128,7 +146,19 @@ async def sarvam_synthesize(
         }
 
         client = await _get_http_client()
-        response = await client.post(_SARVAM_TTS_URL, headers=headers, json=payload)
+
+        # Wrap the HTTP request in a task so we can cancel it if barge-in fires
+        # during the network round-trip (Sarvam returns the full WAV at once —
+        # there is no streaming, so this is the only cancellation window).
+        fetch_task = asyncio.create_task(
+            client.post(_SARVAM_TTS_URL, headers=headers, json=payload)
+        )
+        while not fetch_task.done():
+            if cancelled_flag[0]:
+                fetch_task.cancel()
+                return
+            await asyncio.sleep(0.05)
+        response = await fetch_task
 
         # Some accounts use Bearer auth — retry once if subscription key rejected
         if response.status_code == 403:

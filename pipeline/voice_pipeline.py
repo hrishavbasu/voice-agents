@@ -674,6 +674,12 @@ class VoicePipeline:
                     buf = buf[_FRAME:]
                     total_bytes += len(frame)
                     await self._telephony.send_audio(frame)
+                    # Pace sending to real-time (20 ms per 20 ms frame) so that
+                    # Twilio's play buffer never gets more than ~1 frame ahead of
+                    # actual playback.  Without this sleep, the entire sentence is
+                    # queued instantly and a barge-in clear arrives too late to
+                    # interrupt the current sentence.
+                    await asyncio.sleep(0.018)
                 if self._should_stop_speaking():
                     break
             # Flush remainder padded with μ-law silence (0xFF)

@@ -40,7 +40,7 @@ _TWILIO_RATE = 8000
 _SAMPLE_RATE = int(os.getenv("SARVAM_STT_SAMPLE_RATE", "16000"))
 # ~250 ms of mono s16le at the connection sample rate
 _SEND_BUFFER_BYTES = int(_SAMPLE_RATE * 0.25 * 2)
-_MIN_UTTERANCE_WORDS = 1
+_MIN_UTTERANCE_WORDS = 1  # Accept single-word responses like "हाँ", "नहीं", "हाय"
 
 
 def _pcm_to_wav(pcm: bytes, sample_rate: int = _SAMPLE_RATE) -> bytes:

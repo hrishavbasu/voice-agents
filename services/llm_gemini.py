@@ -227,10 +227,15 @@ def trim_messages_for_llm(messages: List[dict], max_non_system: int = 20) -> Lis
         return systems + rest
 
     trimmed = rest[-max_non_system:]
-    # If we cut off the tool result, drop the orphaned tool_calls at the start.
+    # Drop orphaned assistant+tool_calls at start (tool result was trimmed away).
     while trimmed and trimmed[0].get("role") == "assistant" and trimmed[0].get("tool_calls"):
         if len(trimmed) >= 2 and trimmed[1].get("role") == "tool":
             break
+        trimmed = trimmed[1:]
+    # Drop orphaned tool messages at start (their assistant+tool_calls was trimmed away).
+    # Without the preceding assistant message, the Gemini OpenAI-compat endpoint cannot
+    # determine the function name → function_response.name becomes empty → 400 error.
+    while trimmed and trimmed[0].get("role") == "tool":
         trimmed = trimmed[1:]
     return systems + trimmed
 

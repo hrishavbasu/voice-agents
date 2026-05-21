@@ -540,7 +540,12 @@ class VoicePipeline:
             (session or {}).get("preferred_specialty")
             or (session or {}).get("preferred_doctor")
         )
-        if has_specialty_ctx and re.search(r"(परेशानी|किसलिए)", out):
+        # Only block "what's your problem?" re-prompting when concern is ALREADY known.
+        # has_specialty_ctx alone is not enough — the agent legitimately asks about
+        # concern even after specialty is resolved (e.g. before booking). Triggering
+        # on specialty context caused a 5-repetition loop in live calls.
+        has_concern_ctx = bool((session or {}).get("caller_concern"))
+        if has_specialty_ctx and has_concern_ctx and re.search(r"(परेशानी|किसलिए)", out):
             return "ठीक है, हम appointment आगे बढ़ाते हैं।"
         if (session or {}).get("caller_name") and re.search(r"अपना\s+नाम\s+बता", out):
             return "धन्यवाद, आपका नाम मेरे पास है।"

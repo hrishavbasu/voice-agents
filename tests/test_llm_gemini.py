@@ -88,3 +88,25 @@ def test_empty_tool_list_returns_empty():
     from services.llm_gemini import _convert_tools
     assert _convert_tools([]) == []
     assert _convert_tools(None) == []
+
+
+def test_trim_messages_default_keeps_20_non_system():
+    from services.llm_gemini import trim_messages_for_llm
+    system = {"role": "system", "content": "You are Priya."}
+    # Build 22 alternating user/assistant messages
+    rest = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+        for i in range(22)
+    ]
+    result = trim_messages_for_llm([system] + rest)
+    non_system = [m for m in result if m["role"] != "system"]
+    assert len(non_system) == 20
+
+
+def test_trim_messages_explicit_12_still_works():
+    from services.llm_gemini import trim_messages_for_llm
+    system = {"role": "system", "content": "sys"}
+    rest = [{"role": "user", "content": f"m{i}"} for i in range(15)]
+    result = trim_messages_for_llm([system] + rest, max_non_system=12)
+    non_system = [m for m in result if m["role"] != "system"]
+    assert len(non_system) == 12

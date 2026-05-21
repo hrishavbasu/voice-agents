@@ -94,19 +94,19 @@ TOOL_FILLERS: dict[str, list[str]] = {
     ],
     "hindi": [
         "एक पल के लिए रुकिए।",
-        "मैं अभी देखती हूँ।",
+        "अभी देख लेते हैं।",
         "बस एक सेकंड।",
-        "मैं चेक कर रही हूँ।",
+        "चेक कर रहे हैं।",
         "थोड़ा सा इंतज़ार करें।",
-        "हाँ, मैं अभी पता करती हूँ।",
+        "हाँ, अभी पता करते हैं।",
     ],
     "hinglish": [
-        "एक second, मैं check करती हूँ।",
+        "एक second, check कर रहे हैं।",
         "बस एक पल।",
-        "मैं देखती हूँ।",
+        "देख लेते हैं।",
         "Just a second.",
-        "Let me check करती हूँ।",
-        "हाँ, मैं अभी देख लेती हूँ।",
+        "Let me check करते हैं।",
+        "हाँ, अभी देख लेते हैं।",
     ],
 }
 _BARGE_IN_ACK: dict = {
@@ -391,6 +391,15 @@ class VoicePipeline:
                     extra = self._transcript_queue.get_nowait()
                     user_text = user_text + " " + extra
 
+            # Suppress isolated single-word utterances — almost always partial speech or echo
+            if len(user_text.split()) == 1:
+                await asyncio.sleep(0.6)
+                while not self._transcript_queue.empty():
+                    user_text = user_text + " " + self._transcript_queue.get_nowait()
+                if len(user_text.split()) == 1:
+                    logger.info("Suppressing single-word utterance: %r", user_text)
+                    continue
+
             # User turn already in session/transcript from _on_transcript
             session = await get_session(self.call_id) or {}
 
@@ -438,7 +447,7 @@ class VoicePipeline:
 
             full_messages = trim_messages_for_llm(
                 [{"role": "system", "content": system}] + messages,
-                max_non_system=12,
+                max_non_system=20,
             )
 
             # Stream LLM response
@@ -918,7 +927,7 @@ class VoicePipeline:
             [{"role": "system", "content": system}]
             + messages
             + [assistant_tool_call_msg, tool_result_msg],
-            max_non_system=12,
+            max_non_system=20,
         )
 
         response_parts = []
@@ -1044,7 +1053,7 @@ class VoicePipeline:
             "This sounds urgent. If it is life-threatening, please call one zero eight now. "
             "I am transferring you to our hospital team right away. "
             "यह जरूरी लग रहा है — अगर हालत गंभीर है तो अभी एक शून्य आठ पर कॉल करें। "
-            "मैं आपको अभी हमारी टीम से जोड़ रही हूँ।"
+            "अभी हमारी टीम से जोड़ रहे हैं।"
         )
         # Wait for Twilio to finish playing the buffered audio before transferring.
         # _speak() returns as soon as the last byte is written to the WS buffer —
@@ -1159,12 +1168,12 @@ class VoicePipeline:
             return (
                 f"नमस्ते {name}, {company} में आपका स्वागत है। "
                 f"मैं {agent} हूँ। "
-                f"बताइए, मैं आपकी क्या मदद कर सकती हूँ?"
+                f"बताइए, आपकी क्या मदद कर सकते हैं?"
             )
         return (
             f"नमस्ते, {company} में आपका स्वागत है। "
             f"मैं {agent} हूँ। "
-            f"बताइए, मैं आपकी क्या मदद कर सकती हूँ?"
+            f"बताइए, आपकी क्या मदद कर सकते हैं?"
         )
 
     async def _async_crm_lookup(self) -> None:

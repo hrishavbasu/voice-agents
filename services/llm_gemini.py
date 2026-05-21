@@ -219,7 +219,7 @@ def sanitize_messages_for_gemini(messages: List[dict]) -> List[dict]:
     return systems + cleaned
 
 
-def trim_messages_for_llm(messages: List[dict], max_non_system: int = 12) -> List[dict]:
+def trim_messages_for_llm(messages: List[dict], max_non_system: int = 20) -> List[dict]:
     """Return the last N non-system messages, keeping tool call pairs intact."""
     systems = [m for m in messages if m.get("role") == "system"]
     rest = [m for m in messages if m.get("role") != "system"]

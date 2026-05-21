@@ -139,3 +139,53 @@ def test_hain_not_captured_as_name():
 
 def test_thik_chalega_not_captured_as_name():
     assert extract_caller_name("thik chalega") is None
+
+
+def test_system_prompt_includes_todays_date():
+    from datetime import datetime
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    today = datetime.now().strftime("%A, %d %B %Y")
+    assert today in prompt, f"Expected '{today}' in prompt"
+
+
+def test_system_prompt_has_ack_variety_rule():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    assert "same acknowledgment" in prompt or "same ack" in prompt or "bilkul" in prompt
+    assert "3 turns" in prompt or "three turns" in prompt
+
+
+def test_system_prompt_slot_grouping_rule():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    assert "group" in prompt.lower() or "window" in prompt.lower()
+    assert "3 specific" in prompt or "three specific" in prompt or "4 or more" in prompt
+
+
+def test_system_prompt_mentions_sms_confirmation():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    assert "SMS" in prompt
+    assert "confirmation" in prompt.lower()
+
+
+def test_system_prompt_has_irate_caller_section():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    assert "irate" in prompt.lower() or "frustrated" in prompt.lower()
+    assert "empathy" in prompt.lower() or "sorry for the inconvenience" in prompt.lower() or "samajh" in prompt.lower()
+    assert "escalate" in prompt.lower() or "escalate_to_human" in prompt
+
+
+def test_system_prompt_hinglish_strict_rule():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt(caller_language="hinglish")
+    assert "HINGLISH STRICT" in prompt or ("entirely Hindi" in prompt and "English word" in prompt)
+
+
+def test_system_prompt_has_non_booking_close_instruction():
+    from prompts.system_prompt import build_system_prompt
+    prompt = build_system_prompt()
+    assert "kuch aur" in prompt.lower() or "anything else" in prompt.lower()
+    assert "warm" in prompt.lower() or "dhyan rakhiye" in prompt.lower() or "take care" in prompt.lower()

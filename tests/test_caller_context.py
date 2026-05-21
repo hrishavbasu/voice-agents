@@ -118,3 +118,24 @@ def test_system_prompt_includes_session_context():
     assert "Rahul" in prompt
     assert "chest pain" in prompt
     assert "Do NOT ask" in prompt
+
+
+def test_thik_not_captured_as_name():
+    # STT often transcribes "ठीक है" as Roman "thik hai" — must not become caller name
+    assert extract_caller_name("thik hai") is None
+
+
+def test_theek_hai_not_captured_as_name():
+    assert extract_caller_name("theek hai") is None
+
+
+def test_hai_alone_not_captured_as_name():
+    assert extract_caller_name("hai") is None
+
+
+def test_hain_not_captured_as_name():
+    assert extract_caller_name("hain") is None
+
+
+def test_thik_chalega_not_captured_as_name():
+    assert extract_caller_name("thik chalega") is None

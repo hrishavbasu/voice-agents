@@ -22,6 +22,17 @@ _BLOCKED_NAMES = frozenset({
     "cardiologist", "cardiology", "internal", "medicine", "gastro", "monday",
     "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
     "kal", "parso", "aaj", "tomorrow", "today",
+    # Hindi affirmations / acknowledgements (Devanagari) — commonly misread as names
+    "हाँ", "हां", "नहीं",
+    "ठीक", "बिल्कुल", "ज़रूर",
+    "चलेगा", "चलेगी", "चलेगे",
+    "अच्छा", "बढ़िया", "बहुत",
+    "शुक्रिया", "धन्यवाद",
+    "दीजिए", "करें", "कीजिए", "बताइए", "बताओ",
+    "समझ", "अलविदा",
+    # Roman equivalents missing from original set
+    "bilkul", "zaroor", "theek", "thik", "nahi", "sure", "acha", "achha", "karo", "kijiye",
+    "hai", "hain", "tha", "thi", "the",
 })
 
 _NAME_INTRO_PATTERNS = [
@@ -44,6 +55,13 @@ _NAME_INTRO_PATTERNS = [
     re.compile(r"मेरा\s+नाम\s+([\u0900-\u097fA-Za-z][\u0900-\u097fA-Za-z\s.'-]{1,48})\s+है"),
     re.compile(r"(?:i'm|i am)\s+([\u0900-\u097f][\u0900-\u097f\s]{1,30})", re.IGNORECASE),
 ]
+
+# Matches pure affirmation utterances that are never caller names
+_SHORT_ACK_RE = re.compile(
+    r"^(हाँ|हां|नहीं|ठीक|बिल्कुल|ज़रूर|चलेगा|चलेगी|बढ़िया|अच्छा|शुक्रिया|धन्यवाद)"
+    r"(\s+(है|हैं|चलेगा|चलेगी|जी|sir|सर))?$",
+    re.IGNORECASE,
+)
 
 _CONCERN_PATTERNS = [
     re.compile(
@@ -104,6 +122,10 @@ def extract_caller_name(text: str) -> Optional[str]:
             if cleaned:
                 return cleaned
 
+    # Reject pure affirmation utterances before short-form check
+    if _SHORT_ACK_RE.match(text.strip()):
+        return None
+
     # Short standalone introduction: "Rahul Sharma" / "मैं राहुल"
     words = text.split()
     if 1 <= len(words) <= 3 and len(text) < 40:
@@ -119,7 +141,7 @@ def extract_caller_name(text: str) -> Optional[str]:
             return None
         if re.match(r"^[\u0900-\u097fA-Za-z][\u0900-\u097fA-Za-z\s.'-]+$", text):
             cleaned = _clean_name(text)
-            if cleaned and cleaned.lower() not in _BLOCKED_NAMES:
+            if cleaned and not any(t.lower() in _BLOCKED_NAMES for t in cleaned.split()):
                 return cleaned
 
     return None

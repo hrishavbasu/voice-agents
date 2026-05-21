@@ -98,6 +98,7 @@ LLM_THINKING_BUDGET  = int(_get("llm_thinking_budget", "0"))
 # ── Silence timeout ───────────────────────────────────────────────────────────
 SILENCE_TIMEOUT_SECS = int(_get("silence_timeout_secs", "25"))
 SILENCE_HANGUP_SECS  = int(_get("silence_hangup_secs", "15"))
+POST_BOOKING_WAIT_SECS = int(_get("post_booking_wait_secs", "8"))
 
 BARGE_IN_ACK_MODE = str(_get("barge_in_ack_mode", "sometimes")).lower()
 

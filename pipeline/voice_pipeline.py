@@ -575,6 +575,9 @@ class VoicePipeline:
         text = text.replace("₹", "rupees")
         # Strip thousand-separator commas from standalone numbers so "1,700" → "1700"
         text = re.sub(r"\b(\d{1,3}),(\d{3})\b", r"\1\2", text)
+        # Strip parenthetical English time annotations — LLM writes "साढ़े तीन बजे (3:30 PM)"
+        # for human clarity but TTS reads the parenthetical aloud. The Hindi already says it.
+        text = re.sub(r"\(\s*\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\s*\)", "", text)
         # Expand Devanagari abbreviations that TTS reads unnaturally
         text = text.replace("डॉ.", "डॉक्टर")
         # Devanagari substitutions for Latin-script proper nouns Tripti mispronounces

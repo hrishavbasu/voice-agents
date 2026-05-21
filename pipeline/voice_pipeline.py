@@ -31,6 +31,7 @@ from config.base_config import (
     ADAPTIVE_HOLD_SHORT_MS,
     ADAPTIVE_HOLD_NORMAL_MS,
     BARGE_IN_ACK_MODE,
+    POST_BOOKING_WAIT_SECS,
 )
 from pipeline.tts_prefetch import TtsPrefetchSlot
 from pipeline.caller_context import (
@@ -1082,14 +1083,52 @@ class VoicePipeline:
             return
         lang = self._caller_language
         if lang == "english":
-            msg = "Your appointment is confirmed. Thank you for calling Apollo Hospitals. Have a good day."
+            confirm_msg = (
+                "Your appointment is confirmed. "
+                "You'll receive an SMS confirmation shortly."
+            )
+            followup_msg = "Is there anything else I can help you with?"
+            bye_msg = "Alright, take care. Goodbye!"
         elif lang == "hindi":
-            msg = "आपकी अपॉइंटमेंट कन्फर्म हो गई है। Apollo Hospitals पर कॉल करने के लिए धन्यवाद। आपका दिन शुभ हो।"
+            confirm_msg = (
+                "आपकी अपॉइंटमेंट कन्फर्म हो गई है। "
+                "आपको SMS पर confirmation आ जाएगी।"
+            )
+            followup_msg = "कुछ और पूछना है?"
+            bye_msg = "ठीक है, ध्यान रखिए। अलविदा।"
         else:
-            msg = "Aapki appointment confirm ho gayi hai. Apollo Hospitals ko call karne ke liye dhanyavaad."
+            confirm_msg = (
+                "Aapki appointment confirm ho gayi hai. "
+                "Aapko SMS par confirmation aa jaayegi."
+            )
+            followup_msg = "Kuch aur poochhna hai?"
+            bye_msg = "Theek hai, dhyan rakhiye. Goodbye!"
+
         self._interruption.reset()
-        duration = await self._speak(msg)
-        await asyncio.sleep(duration + 0.2)
+        await self._speak(confirm_msg)
+        if not self._running:
+            return
+
+        await self._speak(followup_msg)
+
+        # Wait up to POST_BOOKING_WAIT_SECS for a caller response.
+        # If they respond, put it back in the queue so _llm_loop handles it naturally.
+        self._agent_in_turn = False
+        self._last_activity_at = time.monotonic()
+        try:
+            response = await asyncio.wait_for(
+                self._transcript_queue.get(),
+                timeout=POST_BOOKING_WAIT_SECS,
+            )
+            await self._transcript_queue.put(response)
+            return  # caller responded — do not hang up
+        except asyncio.TimeoutError:
+            pass
+
+        # No response — warm goodbye then hang up.
+        self._interruption.reset()
+        duration = await self._speak(bye_msg)
+        await asyncio.sleep(duration + 0.3)
         await self._telephony.hangup()
         self._running = False
 

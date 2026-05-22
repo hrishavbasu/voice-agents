@@ -14,7 +14,7 @@ API:
 import asyncio
 import json
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from config.base_config import REDIS_URL, SESSION_TTL_SECONDS, USE_REDIS
 
@@ -88,10 +88,10 @@ class RedisStore:
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
-_store_instance: Optional[InMemoryStore | RedisStore] = None
+_store_instance: Optional[Union[InMemoryStore, RedisStore]] = None
 
 
-def get_store() -> InMemoryStore | RedisStore:
+def get_store() -> Union[InMemoryStore, RedisStore]:
     global _store_instance
     if _store_instance is None:
         if USE_REDIS:

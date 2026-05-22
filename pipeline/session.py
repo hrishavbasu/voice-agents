@@ -39,6 +39,15 @@ async def create_session(call_id: str, caller_phone: str) -> dict:
         "messages": [],           # LLM message history
         "flow_state": "greeting",
         "crm_contact_id": None,
+        "caller_name": None,
+        "caller_concern": None,
+        "preferred_doctor": None,
+        "preferred_date": None,
+        "preferred_time": None,
+        "preferred_specialty": None,
+        "context_events": [],
+        "out_of_scope_strikes": 0,
+        "last_oos_category": None,
         "retry_count": 0,
         "start_time": time.time(),
         "transcript_lines": [],   # raw caller/agent lines for post-call log
@@ -85,9 +94,12 @@ async def append_message(
     messages.append(msg)
     session["messages"] = messages
 
-    lines: list = session.get("transcript_lines", [])
-    lines.append(f"[{role.upper()}] {content}")
-    session["transcript_lines"] = lines
+    # Keep transcript readable: skip empty assistant/tool rows used only
+    # for tool-call bookkeeping.
+    if content.strip():
+        lines: list = session.get("transcript_lines", [])
+        lines.append(f"[{role.upper()}] {content}")
+        session["transcript_lines"] = lines
 
     await store.set(call_id, session)
 
@@ -112,6 +124,11 @@ async def get_transcript(call_id: str) -> str:
 
 
 async def end_session(call_id: str) -> None:
-    """Mark session as ended (keep in store for post-call logging TTL)."""
-    await update_session(call_id, {"flow_state": "ended", "end_time": time.time()})
+    """Mark session as ended, persist local call log, keep session in store for TTL."""
+    session = await update_session(
+        call_id, {"flow_state": "ended", "end_time": time.time()}
+    )
+    from pipeline.call_logs import persist_call_log
+
+    persist_call_log(session)
     logger.info("Session ended for call_id=%s", call_id)

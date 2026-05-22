@@ -18,6 +18,9 @@ COMPANY_CONFIG: dict = {
     # More reliable than IPA dictionary for proper nouns in Indian names.
     "tts_substitutions": {
         "Navi Mumbai": "नवी मुंबई",
+        "Dr. S V Kulkarni": "डॉक्टर एस वी कुलकर्णी",
+        "Internal Medicine": "इंटरनल मेडिसिन",
+        "General Physician": "जनरल फिजिशियन",
     },
     "support_phone": "+916366530173",
     "agent_name": "Priya",
@@ -57,12 +60,12 @@ COMPANY_CONFIG: dict = {
     # ── Business hours (IST — Asia/Kolkata) ──────────────────────────────────
     "timezone": "Asia/Kolkata",
     "business_hours": {
-        "monday":    {"open": "09:00", "close": "19:00"},
-        "tuesday":   {"open": "09:00", "close": "19:00"},
-        "wednesday": {"open": "09:00", "close": "19:00"},
-        "thursday":  {"open": "09:00", "close": "19:00"},
-        "friday":    {"open": "09:00", "close": "19:00"},
-        "saturday":  {"open": "09:00", "close": "17:00"},
+        "monday":    {"open": "09:00", "close": "21:00"},
+        "tuesday":   {"open": "09:00", "close": "21:00"},
+        "wednesday": {"open": "09:00", "close": "21:00"},
+        "thursday":  {"open": "09:00", "close": "21:00"},
+        "friday":    {"open": "09:00", "close": "21:00"},
+        "saturday":  {"open": "09:00", "close": "21:00"},
         "sunday":    None,
     },
 

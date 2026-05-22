@@ -183,7 +183,7 @@ async def ensure_pronunciation_dict() -> tuple[str, str]:
             return "", ""
 
 
-def get_pronunciation_dict_locators() -> list[dict] | None:
+def get_pronunciation_dict_locators() -> "Optional[list[dict]]":
     """
     Return the pronunciation_dictionary_locators payload for ElevenLabs TTS requests,
     or None if no dictionary has been configured.

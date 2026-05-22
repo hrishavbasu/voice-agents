@@ -43,6 +43,7 @@ class TelephonySession:
         self._provider = provider.lower()
         self._stream_sid: Optional[str] = None
         self._call_sid: Optional[str] = None
+        self.caller_phone: Optional[str] = None
         self._active = True
         self.stream_ready = asyncio.Event()  # fired when "start" frame received
 
@@ -86,6 +87,19 @@ class TelephonySession:
         silence = bytes([0xFF] * int(duration_ms * 8))  # 8 bytes/ms at 8kHz
         await self.send_audio(silence)
 
+    async def clear_playback_buffer(self) -> None:
+        """Best-effort carrier buffer clear for immediate barge-in."""
+        if not self._active:
+            return
+        try:
+            if self._provider == "twilio" and self._stream_sid:
+                await self._ws.send_text(json.dumps({
+                    "event": "clear",
+                    "streamSid": self._stream_sid,
+                }))
+        except Exception as exc:
+            logger.debug("clear_playback_buffer ignored: %s", exc)
+
     async def transfer(self, destination: str) -> None:
         """
         Transfer the call to a PSTN number or SIP URI.
@@ -119,18 +133,25 @@ class TelephonySession:
         event = frame.get("event") or frame.get("type", "")
 
         if event == "start":
+            start = frame.get("start") or {}
             self._stream_sid = (
                 frame.get("streamSid")
                 or frame.get("stream_id", "unknown")
             )
             self._call_sid = (
-                (frame.get("start") or {}).get("callSid")
+                start.get("callSid")
                 or frame.get("call_control_id", "unknown")
             )
+            custom = start.get("customParameters") or {}
+            if isinstance(custom, dict):
+                phone = custom.get("caller_phone") or custom.get("From")
+                if phone:
+                    self.caller_phone = str(phone)
             logger.info(
-                "Call started: call_sid=%s stream_sid=%s",
+                "Call started: call_sid=%s stream_sid=%s caller=%s",
                 self._call_sid,
                 self._stream_sid,
+                self.caller_phone or "unknown",
             )
             self.stream_ready.set()  # unblock pipeline greeting
 

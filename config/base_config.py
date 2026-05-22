@@ -8,6 +8,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from config.user_settings import load_user_settings as _load_user_settings
+_US = _load_user_settings()
+
+
+def _get(key: str, default):
+    """Return user_settings value if present, else env var (uppercase key), else default."""
+    if key in _US:
+        return _US[key]
+    return os.getenv(key.upper(), default)
+
+
 # ── Telephony ──────────────────────────────────────────────────────────────────
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -24,14 +35,14 @@ STT_MODEL = os.getenv("STT_MODEL", "nova-3")
 STT_LANGUAGE = os.getenv("STT_LANGUAGE", "hi")      # Devanagari Hindi (Nova-3)
 STT_SMART_FORMAT = True
 STT_INTERIM_RESULTS = True
-STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "1400"))
+STT_ENDPOINTING_MS = int(os.getenv("STT_ENDPOINTING_MS", "700"))
 STT_CONFIDENCE_THRESHOLD = float(os.getenv("STT_CONFIDENCE_THRESHOLD", "0.88"))
 KB_RELOAD_INTERVAL_SECONDS = int(os.getenv("KB_RELOAD_INTERVAL_SECONDS", "300"))  # 5 min
 
 # TTS options
-# "elevenlabs" (Indian voice, recommended) | "deepgram" (prototype) | "cartesia" (production)
+# "sarvam" (Indian languages, primary) | "elevenlabs" (fallback) | "azure" (free fallback) | "deepgram" (prototype)
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")
 TTS_VOICE_ID = os.getenv(
     "TTS_VOICE_ID",
     "aura-asteria-en",  # Deepgram Aura fallback (not used when TTS_PROVIDER=elevenlabs)
@@ -56,6 +67,48 @@ AZURE_TTS_KEY = os.getenv("AZURE_TTS_KEY", "")
 AZURE_TTS_REGION = os.getenv("AZURE_TTS_REGION", "eastus")
 AZURE_TTS_VOICE = os.getenv("AZURE_TTS_VOICE", "en-IN-NeerjaNeural")
 
+# Sarvam Bulbul TTS (Indian languages — primary)
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_TTS_MODEL   = _get("sarvam_tts_model", "bulbul:v3")
+SARVAM_TTS_SPEAKER = _get("sarvam_tts_speaker", "priya")
+
+# ── STT provider ──────────────────────────────────────────────────────────────
+STT_PROVIDER = _get("stt_provider", "sarvam")  # sarvam | deepgram
+
+# Sarvam STT — URL built in services/stt_sarvam.build_sarvam_stt_ws_url() (see Sarvam docs)
+# Optional override: set SARVAM_STT_URL to a full wss:// URL (not the legacy /subscribe path)
+SARVAM_STT_URL = os.getenv("SARVAM_STT_URL", "")
+SARVAM_STT_INTERRUPT_MIN_FRAMES = int(_get("stt_interrupt_min_frames", "2"))
+SARVAM_STT_MIN_SPEECH_FRAMES    = int(_get("stt_min_speech_frames", "5"))
+SARVAM_STT_VOLUME_THRESHOLD     = int(_get("stt_volume_threshold", "-40"))
+SARVAM_STT_HIGH_VAD             = str(_get("stt_high_vad", "true")).lower() in {"true", "1", "yes", "on"}
+SARVAM_STT_NEGATIVE_FRAMES_COUNT  = int(_get("stt_negative_frames_count", "8"))
+SARVAM_STT_NEGATIVE_FRAMES_WINDOW = int(_get("stt_negative_frames_window", "20"))
+
+# ── TTS prosody ───────────────────────────────────────────────────────────────
+SARVAM_TTS_PACE     = float(_get("sarvam_tts_pace", "0.92"))
+SARVAM_TTS_PITCH    = float(_get("sarvam_tts_pitch", "0.0"))
+SARVAM_TTS_LOUDNESS = float(_get("sarvam_tts_loudness", "1.3"))
+
+# ── Gemini LLM ────────────────────────────────────────────────────────────────
+GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL         = _get("llm_model", os.getenv("GEMINI_MODEL", "gemini-2.5-pro-preview-06-05"))
+LLM_THINKING_BUDGET  = int(_get("llm_thinking_budget", "0"))
+
+# ── Silence timeout ───────────────────────────────────────────────────────────
+SILENCE_TIMEOUT_SECS = int(_get("silence_timeout_secs", "25"))
+SILENCE_HANGUP_SECS  = int(_get("silence_hangup_secs", "15"))
+POST_BOOKING_WAIT_SECS = int(_get("post_booking_wait_secs", "8"))
+
+BARGE_IN_ACK_MODE = str(_get("barge_in_ack_mode", "sometimes")).lower()
+
+# ── Empathy ───────────────────────────────────────────────────────────────────
+EMPATHY_LEVEL = max(1, min(5, int(_get("empathy_level", "3"))))  # 1 (efficient) – 5 (deeply empathetic)
+
+# ── Adaptive hold (ms) ────────────────────────────────────────────────────────
+ADAPTIVE_HOLD_SHORT_MS  = int(_get("adaptive_hold_short_ms", "400"))
+ADAPTIVE_HOLD_NORMAL_MS = int(_get("adaptive_hold_normal_ms", "150"))
+
 # ── LLM ───────────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -68,8 +121,8 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
 
-# LLM_PROVIDER: "groq" (default, lowest latency) | "openrouter" (fallback)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
+# LLM_PROVIDER: "gemini" (default) | "groq" | "openrouter" | "cerebras"
+LLM_PROVIDER = _get("llm_provider", os.getenv("LLM_PROVIDER", "gemini"))
 LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "200"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.5"))
@@ -90,3 +143,5 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "")  # e.g. https://xxxx.ngrok.io
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+CALL_LOGS_ENABLED = os.getenv("CALL_LOGS_ENABLED", "true").lower() == "true"
+CALL_LOGS_DIR = os.getenv("CALL_LOGS_DIR", "logs/calls")

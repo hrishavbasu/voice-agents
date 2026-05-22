@@ -3,7 +3,9 @@ TTS service — supports ElevenLabs (Indian voice, primary), Deepgram Aura
 (prototype/free), and Cartesia Sonic (production).
 
 Selected by TTS_PROVIDER env var:
-  "elevenlabs"  — Indian English voice via ElevenLabs (recommended)
+  "sarvam"      — Sarvam Bulbul Indian voice (primary, recommended)
+  "elevenlabs"  — ElevenLabs Indian English voice (fallback)
+  "azure"       — Azure Cognitive Services TTS (free fallback)
   "deepgram"    — Deepgram Aura free tier
   "cartesia"    — Cartesia Sonic production
 
@@ -58,28 +60,49 @@ class TTSService:
         self._cancel_flag[0] = True
         logger.debug("TTS: cancel requested")
 
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+
     def reset(self) -> None:
         """Clear the cancel flag before starting a new utterance."""
         self._cancelled = False
         self._cancel_flag = [False]
 
-    async def synthesize(self, text: str, voice_id: str | None = None) -> AsyncIterator[bytes]:
+    async def synthesize(self, text: str, language_code: str = "hi-IN", pitch_override=None) -> AsyncIterator[bytes]:
         """Stream audio chunks for *text*.  Stops early if cancel() was called.
 
         ElevenLabs / Azure failures automatically fall back to Deepgram
         so the caller always hears audio.
         """
         self.reset()
-        if self._provider == "elevenlabs":
+        if self._provider == "sarvam":
             try:
-                async for chunk in self._elevenlabs(text, voice_id):
+                async for chunk in self._sarvam(text, language_code, pitch_override=pitch_override):
                     if self._cancelled:
                         return
                     yield chunk
             except Exception as exc:
-                logger.warning(
-                    "ElevenLabs failed (%s) — falling back to Deepgram TTS", exc
-                )
+                logger.warning("Sarvam TTS failed (%s) — falling back to ElevenLabs", exc)
+                try:
+                    async for chunk in self._elevenlabs(text):
+                        if self._cancelled:
+                            return
+                        yield chunk
+                except Exception as exc2:
+                    logger.warning("ElevenLabs failed (%s) — falling back to Deepgram TTS", exc2)
+                    async for chunk in self._deepgram(text):
+                        if self._cancelled:
+                            return
+                        yield chunk
+        elif self._provider == "elevenlabs":
+            try:
+                async for chunk in self._elevenlabs(text):
+                    if self._cancelled:
+                        return
+                    yield chunk
+            except Exception as exc:
+                logger.warning("ElevenLabs failed (%s) — falling back to Deepgram TTS", exc)
                 async for chunk in self._deepgram(text):
                     if self._cancelled:
                         return
@@ -91,9 +114,7 @@ class TTSService:
                         return
                     yield chunk
             except Exception as exc:
-                logger.warning(
-                    "Azure TTS failed (%s) — falling back to Deepgram TTS", exc
-                )
+                logger.warning("Azure TTS failed (%s) — falling back to Deepgram TTS", exc)
                 async for chunk in self._deepgram(text):
                     if self._cancelled:
                         return
@@ -118,9 +139,16 @@ class TTSService:
 
     # ── ElevenLabs (Indian English — primary) ─────────────────────────────────
 
-    async def _elevenlabs(self, text: str, voice_id: str | None = None) -> AsyncIterator[bytes]:
+    async def _elevenlabs(self, text: str, voice_id: Optional[str] = None) -> AsyncIterator[bytes]:
         from services.tts_elevenlabs import elevenlabs_synthesize
         async for chunk in elevenlabs_synthesize(text, self._cancel_flag, voice_id=voice_id):
+            yield chunk
+
+    # ── Sarvam Bulbul (Indian languages — primary) ────────────────────────────
+
+    async def _sarvam(self, text: str, language_code: str = "hi-IN", pitch_override=None) -> AsyncIterator[bytes]:
+        from services.tts_sarvam import sarvam_synthesize
+        async for chunk in sarvam_synthesize(text, self._cancel_flag, language_code=language_code, pitch_override=pitch_override):
             yield chunk
 
     # ── Deepgram Aura (REST streaming, free tier) ─────────────────────────────

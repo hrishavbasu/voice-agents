@@ -79,23 +79,68 @@ def _tz() -> ZoneInfo:
 
 # ── Date parsing ──────────────────────────────────────────────────────────────
 
-def _parse_preferred_date(preferred_date: str) -> Optional[date]:
+def _normalize_date_phrase(preferred_date: str) -> str:
+    """Map Hindi/Devanagari/Hinglish date phrases to a normalized Latin token string."""
+    s = preferred_date.strip()
+    devanagari_digits = str.maketrans("०१२३४५६७८९", "0123456789")
+    s = s.translate(devanagari_digits)
+    for hin, roman in (
+        ("आज", "aaj"),
+        ("कल", "kal"),
+        ("परसों", "parso"),
+        ("परसो", "parso"),
+        ("सोमवार", "monday"),
+        ("मंगलवार", "tuesday"),
+        ("बुधवार", "wednesday"),
+        ("गुरुवार", "thursday"),
+        ("शुक्रवार", "friday"),
+        ("शनिवार", "saturday"),
+        ("रविवार", "sunday"),
+        ("जनवरी", "january"),
+        ("फ़रवरी", "february"),
+        ("फरवरी", "february"),
+        ("मार्च", "march"),
+        ("अप्रैल", "april"),
+        ("मई", "may"),
+        ("जून", "june"),
+        ("जुलाई", "july"),
+        ("अगस्त", "august"),
+        ("सितंबर", "september"),
+        ("अक्टूबर", "october"),
+        ("नवंबर", "november"),
+        ("दिसंबर", "december"),
+    ):
+        s = s.replace(hin, roman)
+    s = s.lower()
+    s = re.sub(
+        r"\b(ko|mein|me|subah|shaam|raat|morning|evening|afternoon|ko\s*)\b",
+        " ",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def parse_preferred_date(preferred_date: str) -> Optional[date]:
     """
     Convert caller's natural date expression to a date object.
 
-    Handles: "tomorrow", "day after tomorrow", weekday names ("Monday"),
-    "next Monday", absolute dates ("20 April", "April 20", "20th").
+    Handles: today/aaj, tomorrow/kal, parso/parson, weekdays, absolute dates.
     Returns None if unparseable.
     """
+    return _parse_preferred_date(preferred_date)
+
+
+def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     today = datetime.now(_tz()).date()
-    pd = preferred_date.lower().strip()
+    pd = _normalize_date_phrase(preferred_date)
 
     # Relative
     if pd in ("today", "aaj"):
         return today
-    if pd in ("tomorrow", "kal", "kl"):
+    if pd in ("tomorrow", "kal", "kl") or pd.startswith("kal "):
         return today + timedelta(days=1)
-    if "day after" in pd or "parso" in pd:
+    if pd in ("parso", "parson", "pasado") or pd.startswith("parso") or "day after" in pd:
         return today + timedelta(days=2)
     if "next week" in pd:
         return today + timedelta(days=7)
@@ -141,14 +186,13 @@ def _parse_preferred_date(preferred_date: str) -> Optional[date]:
     return None
 
 
-def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
+def _parse_preferred_hour(preferred_time: str) -> Optional[float]:
     """
-    Parse caller's preferred time to a 24h hour integer.
+    Parse caller's preferred time to a 24h float (e.g. 18.5 for 6:30 PM).
     Handles: "4pm", "4:30 PM", "16:30", "morning", "evening", "shaam",
-             "six thirty in the evening", "saade chhe baje".
+             "six thirty in the evening", "half past six in the evening".
 
-    Word-form numbers are resolved BEFORE period keywords so that
-    "six thirty in the evening" → 18, not 17 (the evening-period default).
+    Returns a float so _pick_best_slot can distinguish 6:00 from 6:30.
     """
     pt = preferred_time.lower().strip()
 
@@ -163,14 +207,11 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
         "half past": 30, "quarter past": 15, "quarter to": -15,
     }
 
-    # Try to extract word-form hour (e.g. "six", "seven thirty", "half past six")
     word_hour: Optional[int] = None
     word_minute: int = 0
 
     # "half past SIX" / "quarter past SEVEN"
-    m_half = re.search(
-        r"(half past|quarter past|quarter to)\s+(\w+)", pt
-    )
+    m_half = re.search(r"(half past|quarter past|quarter to)\s+(\w+)", pt)
     if m_half:
         adj = _WORD_MINUTES.get(m_half.group(1), 0)
         h = _WORD_HOURS.get(m_half.group(2))
@@ -189,42 +230,39 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
                         break
                 break
 
-    # ── Period keywords (used for AM/PM resolution or standalone fallback) ────
+    # ── Period keywords ───────────────────────────────────────────────────────
     is_morning   = any(w in pt for w in ["morning", "subah", "savere"])
     is_afternoon = any(w in pt for w in ["afternoon", "dopahar", "dupahr"])
     is_evening   = any(w in pt for w in ["evening", "shaam", "sham"])
     is_night     = any(w in pt for w in ["night", "raat"])
 
-    # ── If we parsed a word-form hour, apply AM/PM from period keyword ────────
     if word_hour is not None:
         if is_morning:
-            # Keep as-is (1-12 AM)
             if word_hour == 12:
                 word_hour = 0
         elif is_afternoon or is_evening or is_night:
-            # Convert to PM
             if word_hour != 12:
                 word_hour += 12
         else:
-            # No period keyword — use convention: 1-8 → PM, 9-12 → AM
             if word_hour <= 8:
                 word_hour += 12
-        return word_hour  # ignore word_minute for slot selection (hour granularity)
+        return word_hour + word_minute / 60.0
 
-    # ── Standalone period fallbacks (no specific hour given) ─────────────────
+    # ── Standalone period fallbacks ───────────────────────────────────────────
     if is_morning:
-        return 10
+        return 10.0
     if is_afternoon:
-        return 14
+        return 14.0
     if is_evening or is_night:
-        return 17
+        return 17.0
 
-    # ── Digit-based parsing ───────────────────────────────────────────────────
+    # ── Digit-based parsing (preserves minutes) ───────────────────────────────
     m = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", pt)
     if not m:
         return None
 
     hour = int(m.group(1))
+    minutes = int(m.group(2)) if m.group(2) else 0
     ampm = m.group(3)
 
     if ampm == "pm" and hour != 12:
@@ -232,10 +270,44 @@ def _parse_preferred_hour(preferred_time: str) -> Optional[int]:
     elif ampm == "am" and hour == 12:
         hour = 0
     elif ampm is None and hour <= 8:
-        # Ambiguous single digit with no am/pm — assume PM
         hour += 12
 
-    return hour
+    return hour + minutes / 60.0
+
+
+# ── Clinic hours (9 AM – 9 PM IST) ─────────────────────────────────────────────
+
+def _day_hours(target_date: date) -> Optional[dict]:
+    day_name = target_date.strftime("%A").lower()
+    return COMPANY_CONFIG.get("business_hours", {}).get(day_name)
+
+
+def _last_slot_start_hour(close_h: int, close_m: int, duration_min: int) -> float:
+    """Latest allowed slot start as 24h float (e.g. 20.5 for 8:30 PM with 30-min slots, close 21:00)."""
+    close_mins = close_h * 60 + close_m
+    last_start = close_mins - duration_min
+    return last_start // 60 + (last_start % 60) / 60.0
+
+
+def _preferred_time_allowed(preferred_time: str, target_date: date) -> tuple[bool, Optional[str]]:
+    """Return (ok, reason) — rejects times outside 9 AM–9 PM clinic hours."""
+    pref = _parse_preferred_hour(preferred_time)
+    if pref is None:
+        return True, None
+    hours = _day_hours(target_date)
+    if not hours:
+        return False, "The hospital is closed on that day."
+    open_h, open_m = map(int, hours["open"].split(":"))
+    close_h, close_m = map(int, hours["close"].split(":"))
+    duration = COMPANY_CONFIG.get("appointment_slot_duration_minutes", 30)
+    open_f = open_h + open_m / 60.0
+    last_start = _last_slot_start_hour(close_h, close_m, duration)
+    if pref < open_f or pref > last_start:
+        return False, (
+            "Appointments are only available between 9 AM and 9 PM. "
+            "अपॉइंटमेंट सुबह 9 बजे से रात 9 बजे तक ही उपलब्ध हैं।"
+        )
+    return True, None
 
 
 # ── Slot generation ───────────────────────────────────────────────────────────
@@ -246,7 +318,6 @@ def _slots_for_date(doctor: dict, target_date: date) -> list[datetime]:
     Returns empty list if doctor not available that day.
     """
     duration = COMPANY_CONFIG.get("appointment_slot_duration_minutes", 30)
-    biz_hours = COMPANY_CONFIG.get("business_hours", {})
     available_days = set(doctor.get("available_days", []))
     tz = _tz()
 
@@ -255,7 +326,7 @@ def _slots_for_date(doctor: dict, target_date: date) -> list[datetime]:
     if day_name not in available_days:
         return []
 
-    hours = biz_hours.get(day_name)
+    hours = _day_hours(target_date)
     if not hours:
         return []
 
@@ -407,6 +478,7 @@ def check_doctor_slots(
         "date": target_date.strftime("%A, %d %B"),
         "slots": _sample_slots_for_voice(slots),
         "slot_count": len(slots),
+        "clinic_hours": "9:00 AM – 9:00 PM",
     }
 
 
@@ -510,6 +582,18 @@ def list_doctors(specialty: Optional[str] = None) -> dict:
     return {"success": True, "doctors": formatted, "count": len(formatted)}
 
 
+_SPECIALTY_ALIASES: dict[str, str] = {
+    "heart": "cardio", "cardiac": "cardio",
+    "bone": "orthop", "knee": "orthop", "joint": "orthop", "leg": "orthop",
+    "eye": "ophthalm", "vision": "ophthalm",
+    "stomach": "gastro", "digestive": "gastro",
+    "brain": "neuro", "nerve": "neuro",
+    "cancer": "oncol", "tumor": "oncol",
+    "child": "pediatr", "kids": "pediatr",
+    "general": "internal", "physician": "internal", "fever": "internal",
+}
+
+
 def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Optional[dict]:
     doctors = COMPANY_CONFIG.get("doctors", [])
     if doctor_name:
@@ -519,6 +603,11 @@ def _find_doctor(doctor_name: Optional[str], specialty: Optional[str]) -> Option
                 return d
     if specialty:
         spec_lower = specialty.lower()
+        # Apply alias map so "general physician" → "internal" → matches "Internal Medicine"
+        for word, mapped in _SPECIALTY_ALIASES.items():
+            if word in spec_lower:
+                spec_lower = mapped
+                break
         for d in doctors:
             if spec_lower in d["specialty"].lower():
                 return d
@@ -571,6 +660,15 @@ def book_appointment(
     if target_date is None:
         # No date preference — use next available day for this doctor
         target_date = today
+
+    if preferred_time:
+        ok, reason = _preferred_time_allowed(preferred_time, target_date)
+        if not ok:
+            return {
+                "success": False,
+                "reason": reason,
+                "clinic_hours": "9:00 AM – 9:00 PM (Monday–Saturday)",
+            }
 
     # ── Check doctor availability on target date ───────────────────────────────
     day_name = target_date.strftime("%A").lower()
@@ -685,7 +783,7 @@ def book_appointment(
             pref_hour = _parse_preferred_hour(preferred_time)
             if pref_hour is not None:
                 diff = abs(chosen.hour + chosen.minute / 60 - pref_hour)
-                if diff > 0.75:  # more than 45 min off
+                if diff > 0.25:  # more than 15 min off
                     success_result["note"] = (
                         f"Booked at {booked_spoken} ({booked_digit}) — nearest available slot. "
                         f"Requested time '{preferred_time}' had no exact match. "

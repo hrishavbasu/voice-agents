@@ -236,6 +236,17 @@
       <textarea id="agent_persona" placeholder="warm, professional, and caring"></textarea>
     </div>
     <div class="field">
+      <label>Empathy Level <small>(controls tone and frustrated-caller handling)</small></label>
+      <div class="range-row">
+        <input type="range" id="empathy_level" min="1" max="5" step="1"
+               oninput="rv('empathy_level_v', this.value); updateEmpathyLabel(this.value)">
+        <span class="range-val" id="empathy_level_v">3</span>
+      </div>
+      <div id="empathy_label" style="font-size:0.82rem; color:#555; margin-top:4px;">
+        Warm — balanced empathy and efficiency (default)
+      </div>
+    </div>
+    <div class="field">
       <label>Barge-in acknowledgment</label>
       <select id="barge_in_ack_mode">
         <option value="silent">silent</option>
@@ -268,11 +279,23 @@ const FIELDS = [
   'llm_provider','llm_model','llm_temperature','llm_max_tokens','llm_thinking_budget',
   'silence_timeout_secs','silence_hangup_secs',
   'adaptive_hold_short_ms','adaptive_hold_normal_ms',
-  'agent_name','agent_persona','agent_default_language','barge_in_ack_mode',
+  'agent_name','agent_persona','empathy_level','agent_default_language','barge_in_ack_mode',
 ];
-const RANGES = new Set(['stt_volume_threshold','sarvam_tts_pace','sarvam_tts_pitch','sarvam_tts_loudness','llm_temperature']);
+const RANGES = new Set(['stt_volume_threshold','sarvam_tts_pace','sarvam_tts_pitch','sarvam_tts_loudness','llm_temperature','empathy_level']);
 
 function rv(valId, v) { document.getElementById(valId).textContent = v; }
+
+const EMPATHY_LABELS = {
+  1: 'Efficient — task-focused, minimal emotional acknowledgment',
+  2: 'Professional — brief acknowledgment, quick to solution',
+  3: 'Warm — balanced empathy and efficiency (default)',
+  4: 'Empathetic — feelings-first, patient',
+  5: 'Deeply Empathetic — lead with emotion, proactive human handoff',
+};
+function updateEmpathyLabel(val) {
+  const el = document.getElementById('empathy_label');
+  if (el) el.textContent = EMPATHY_LABELS[parseInt(val)] || '';
+}
 
 function toggle(id) {
   const body = document.getElementById(id + '-body');
@@ -306,6 +329,9 @@ async function load() {
     const res = await fetch('/config');
     const data = await res.json();
     FIELDS.forEach(id => setVal(id, data[id]));
+    // Sync empathy label after load
+    const empathyEl = document.getElementById('empathy_level');
+    if (empathyEl) updateEmpathyLabel(empathyEl.value);
   } catch(e) {
     showMsg('Could not load settings: ' + e.message, 'err');
   }

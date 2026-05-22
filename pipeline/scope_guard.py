@@ -92,20 +92,20 @@ DECLINE_MESSAGES = {
         "I can't handle {topic} here. Would you like to book an appointment?"
     ),
     "hindi": (
-        "मैं यहाँ सिर्फ डॉक्टर अपॉइंटमेंट में मदद कर सकती हूँ। "
-        "{topic} के लिए अभी मैं सहायता नहीं कर सकती। क्या आप अपॉइंटमेंट बुक करना चाहेंगे?"
+        "यहाँ सिर्फ डॉक्टर अपॉइंटमेंट में मदद कर सकते हैं। "
+        "{topic} के लिए अभी सहायता नहीं कर सकते। क्या आप अपॉइंटमेंट बुक करना चाहेंगे?"
     ),
     "hinglish": (
-        "Main yahan sirf doctor appointments mein help kar sakti hoon. "
-        "{topic} ke liye abhi main assist nahi kar sakti. "
+        "Yahan sirf doctor appointments mein help kar sakte hain. "
+        "{topic} ke liye abhi assist nahi kar sakte. "
         "Kya aap appointment book karna chahenge?"
     ),
 }
 
 TRANSFER_MESSAGES = {
     "english": "I'll connect you to our team now.",
-    "hindi": "मैं आपको अभी हमारी टीम से जोड़ रही हूँ।",
-    "hinglish": "Main aapko abhi hamari team se connect kar rahi hoon.",
+    "hindi": "अभी हमारी टीम से जोड़ रहे हैं।",
+    "hinglish": "Aapko abhi hamari team se connect kar rahe hain.",
 }
 
 _TOPIC_LABELS = {

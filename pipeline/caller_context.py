@@ -259,7 +259,7 @@ def format_context_for_prompt(session: Optional[dict]) -> str:
             f"\"{name} — booking ke liye naam sahi hai?\" / \"Just confirming the name for the appointment — {name}?\""
         )
 
-    concern = session.get("caller_concern")
+    concern = session.get("caller_concern") or session.get("preferred_specialty")
     if concern:
         has_any = True
         lines.append(
@@ -284,7 +284,9 @@ def format_context_for_prompt(session: Optional[dict]) -> str:
         lines.append(f"- **Preferred time discussed:** {pref_time}")
 
     specialty = session.get("preferred_specialty")
-    if specialty:
+    # Only show specialty separately if caller_concern was also set; otherwise
+    # specialty was already surfaced above as the "Reason for visit" fallback.
+    if specialty and session.get("caller_concern"):
         has_any = True
         lines.append(f"- **Specialty discussed:** {specialty}")
 

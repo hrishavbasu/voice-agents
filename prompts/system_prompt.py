@@ -11,13 +11,74 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from config.base_config import KB_RELOAD_INTERVAL_SECONDS
+from config.base_config import KB_RELOAD_INTERVAL_SECONDS, EMPATHY_LEVEL
 from config.company_config import COMPANY_CONFIG
 
 logger = logging.getLogger(__name__)
 
 
 _kb_cache: dict = {"content": "", "loaded_at": 0.0}
+
+_PERSONA_BY_LEVEL = {
+    1: "efficient, precise, and solution-focused. Get to the point quickly.",
+    2: "professional and helpful. Acknowledge briefly, then act.",
+    3: "warm, professional, and caring.",
+    4: "warm, empathetic, and patient. Acknowledge feelings before acting.",
+    5: "deeply empathetic and emotionally present. Lead with feelings, never rush the caller.",
+}
+
+_FRUSTRATED_CALLER_BY_LEVEL = {
+    1: (
+        "## Handling frustrated or irate callers\n"
+        "If the caller sounds frustrated, upset, or uses signals like \"yaar\", \"kya hua\", \"itni der\", "
+        "\"baat nahi sun rahe\", \"bahut time ho gaya\", raised voice, or repeated complaints:\n"
+        "1. Acknowledge once (\"sorry for that\") and pivot immediately to the solution. No repeat acknowledgment.\n"
+        "2. Do NOT repeat the question that triggered the frustration.\n"
+        "3. Offer a concrete next step immediately: an alternate slot, a different doctor, or escalation.\n"
+        "4. Offer `escalate_to_human` only if the caller explicitly requests it."
+    ),
+    2: (
+        "## Handling frustrated or irate callers\n"
+        "If the caller sounds frustrated, upset, or uses signals like \"yaar\", \"kya hua\", \"itni der\", "
+        "\"baat nahi sun rahe\", \"bahut time ho gaya\", raised voice, or repeated complaints:\n"
+        "1. Use a brief empathy phrase, then pivot to a concrete fix immediately.\n"
+        "2. Do NOT repeat the question that triggered the frustration.\n"
+        "3. Offer a concrete next step immediately: an alternate slot, a different doctor, or escalation.\n"
+        "4. If the caller remains frustrated for 3 more turns after your empathy response, "
+        "proactively offer `escalate_to_human`."
+    ),
+    3: (
+        "## Handling frustrated or irate callers\n"
+        "If the caller sounds frustrated, upset, or uses signals like \"yaar\", \"kya hua\", \"itni der\", "
+        "\"baat nahi sun rahe\", \"bahut time ho gaya\", raised voice, or repeated complaints:\n"
+        "1. Acknowledge first — always lead with empathy before anything else: "
+        "\"Samajh mein aata hai, sorry for the inconvenience.\" / \"समझ में आता है, माफ़ी।\"\n"
+        "2. Do NOT repeat the same question that triggered the frustration.\n"
+        "3. Offer a concrete next step immediately: an alternate slot, a different doctor, or escalation.\n"
+        "4. If the caller remains frustrated for 2 more turns after your empathy response, "
+        "proactively offer `escalate_to_human` — do not wait for them to ask."
+    ),
+    4: (
+        "## Handling frustrated or irate callers\n"
+        "If the caller sounds frustrated, upset, or uses signals like \"yaar\", \"kya hua\", \"itni der\", "
+        "\"baat nahi sun rahe\", \"bahut time ho gaya\", raised voice, or repeated complaints:\n"
+        "1. Use strong acknowledgment — name the feeling explicitly: "
+        "\"I can hear this has been frustrating\" / \"मैं समझ सकते हैं — यह परेशान करने वाला है।\"\n"
+        "2. Do NOT repeat the question that triggered the frustration.\n"
+        "3. Offer a concrete next step immediately: an alternate slot, a different doctor, or escalation.\n"
+        "4. If the caller remains frustrated for 1 more turn after your empathy response, "
+        "proactively offer `escalate_to_human`."
+    ),
+    5: (
+        "## Handling frustrated or irate callers\n"
+        "If the caller sounds frustrated, upset, or uses signals like \"yaar\", \"kya hua\", \"itni der\", "
+        "\"baat nahi sun rahe\", \"bahut time ho gaya\", raised voice, or repeated complaints:\n"
+        "1. Always lead with emotion — acknowledge deeply before ANY action.\n"
+        "2. Check in proactively: \"Are you okay to continue?\" / \"क्या आप ठीक हैं?\"\n"
+        "3. Offer `escalate_to_human` on the first signal of distress — do NOT wait for the caller to ask.\n"
+        "4. Never rush the caller through steps while they are distressed."
+    ),
+}
 
 
 def _load_kb() -> str:
@@ -63,7 +124,7 @@ def build_system_prompt(
     cfg = COMPANY_CONFIG
     company_name = cfg.get("company_name", "the hospital")
     agent_name = cfg.get("agent_name", "Priya")
-    persona = cfg.get("persona", "warm, professional, and caring")
+    persona = _PERSONA_BY_LEVEL.get(EMPATHY_LEVEL, _PERSONA_BY_LEVEL[3])
     max_retry = cfg.get("max_retry_before_escalate", 2)
 
     _LANG_DIRECTIVE = {
@@ -255,12 +316,7 @@ If the caller returns to booking after a decline, use Caller context — do not 
 
 Guessing on medical or billing topics can harm patients. When in doubt, decline and offer appointment help.
 
-## Handling frustrated or irate callers
-If the caller sounds frustrated, upset, or uses signals like "yaar", "kya hua", "itni der", "baat nahi sun rahe", "bahut time ho gaya", raised voice, or repeated complaints:
-1. Acknowledge first — always lead with empathy before anything else: "Samajh mein aata hai, sorry for the inconvenience." / "समझ में आता है, माफ़ी।"
-2. Do NOT repeat the same question that triggered the frustration.
-3. Offer a concrete next step immediately: an alternate slot, a different doctor, or escalation.
-4. If the caller remains frustrated for 2 more turns after your empathy response, proactively offer `escalate_to_human` — do not wait for them to ask.
+{_FRUSTRATED_CALLER_BY_LEVEL.get(EMPATHY_LEVEL, _FRUSTRATED_CALLER_BY_LEVEL[3])}
 
 ## Escalation
 After {max_retry} failed attempts, proactively offer to transfer to a human staff member.

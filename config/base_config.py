@@ -102,6 +102,9 @@ POST_BOOKING_WAIT_SECS = int(_get("post_booking_wait_secs", "8"))
 
 BARGE_IN_ACK_MODE = str(_get("barge_in_ack_mode", "sometimes")).lower()
 
+# ── Empathy ───────────────────────────────────────────────────────────────────
+EMPATHY_LEVEL = max(1, min(5, int(_get("empathy_level", "3"))))  # 1 (efficient) – 5 (deeply empathetic)
+
 # ── Adaptive hold (ms) ────────────────────────────────────────────────────────
 ADAPTIVE_HOLD_SHORT_MS  = int(_get("adaptive_hold_short_ms", "400"))
 ADAPTIVE_HOLD_NORMAL_MS = int(_get("adaptive_hold_normal_ms", "150"))

@@ -132,8 +132,10 @@ async def test_playback_until_is_short_after_speak():
     pipeline._caller_language = "hinglish"
     pipeline._playback_until = 0.0
     pipeline.call_id = "test-regression"
+    pipeline._prefetch = MagicMock()
 
     # Patch asyncio.sleep inside _speak to avoid real 0.018s waits per frame
+    t_before_speak = time.monotonic()
     with patch("pipeline.voice_pipeline.asyncio.sleep", new_callable=AsyncMock):
         with patch("pipeline.voice_pipeline.append_message", new_callable=AsyncMock):
             await pipeline._speak("test utterance", record_transcript=False)
@@ -143,4 +145,6 @@ async def test_playback_until_is_short_after_speak():
         f"_playback_until is {delta:.2f}s in the future — ghost window too long. "
         f"Expected ≤ 0.5s (the 0.3s drain guard)."
     )
-    assert delta > 0, "_playback_until should still be slightly in the future (drain guard active)"
+    assert pipeline._playback_until > t_before_speak, (
+        "_playback_until was not updated by _speak() — still at initial value"
+    )

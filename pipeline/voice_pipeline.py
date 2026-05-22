@@ -690,8 +690,8 @@ class VoicePipeline:
             self._tts_playing = False
             if self._greeting_finished:
                 self._last_activity_at = time.monotonic()
+            self._playback_until = time.monotonic() + 0.3  # ~300 ms covers Twilio buffer drain; _tts_playing already cleared in finally
         duration = total_bytes / 8000
-        self._playback_until = time.monotonic() + 0.3
         if record_transcript and self._running and text.strip():
             await append_message(self.call_id, "assistant", text)
         return duration

@@ -85,3 +85,62 @@ async def test_barge_in_stops_slow_speak_within_400ms():
     await asyncio.wait_for(task, timeout=2.0)
     assert time.monotonic() - t0 < 0.5
     assert "clear" in telephony.events
+
+
+@pytest.mark.asyncio
+async def test_playback_until_is_short_after_speak():
+    """_playback_until must be within 0.5s of now after _speak() returns.
+
+    Regression: old formula set _playback_until = now + duration + 0.6 AFTER
+    the real-time frame loop, creating a ghost window of ~duration seconds where
+    any START_SPEECH falsely triggered barge-in.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from pipeline.voice_pipeline import VoicePipeline
+
+    # Build a minimal pipeline instance without __init__
+    pipeline = VoicePipeline.__new__(VoicePipeline)
+
+    telephony = MagicMock()
+    telephony.send_audio = AsyncMock()
+
+    # Mock TTSService with an async generator that yields ~1s of audio (8000 bytes)
+    fake_audio = b"\xff" * 8000
+
+    async def fake_synthesize(text, language_code="hi-IN", pitch_override=None):
+        # yield in 1024-byte chunks (no sleep — we want to test timing of _playback_until,
+        # not real-time pacing, so skip the asyncio.sleep inside _speak by making
+        # the frame loop complete quickly)
+        for i in range(0, len(fake_audio), 1024):
+            yield fake_audio[i : i + 1024]
+
+    mock_tts = MagicMock()
+    mock_tts.reset = MagicMock()
+    mock_tts.is_cancelled = False
+    mock_tts.synthesize = fake_synthesize
+
+    mock_interruption = MagicMock()
+    mock_interruption.is_interrupted = False
+
+    pipeline._telephony = telephony
+    pipeline._tts = mock_tts
+    pipeline._tts_playing = False
+    pipeline._running = True
+    pipeline._greeting_finished = True
+    pipeline._last_activity_at = 0.0
+    pipeline._interruption = mock_interruption
+    pipeline._caller_language = "hinglish"
+    pipeline._playback_until = 0.0
+    pipeline.call_id = "test-regression"
+
+    # Patch asyncio.sleep inside _speak to avoid real 0.018s waits per frame
+    with patch("pipeline.voice_pipeline.asyncio.sleep", new_callable=AsyncMock):
+        with patch("pipeline.voice_pipeline.append_message", new_callable=AsyncMock):
+            await pipeline._speak("test utterance", record_transcript=False)
+
+    delta = pipeline._playback_until - time.monotonic()
+    assert delta <= 0.5, (
+        f"_playback_until is {delta:.2f}s in the future — ghost window too long. "
+        f"Expected ≤ 0.5s (the 0.3s drain guard)."
+    )
+    assert delta > 0, "_playback_until should still be slightly in the future (drain guard active)"
